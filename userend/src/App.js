@@ -947,9 +947,14 @@ export default function App() {
         if (!imagePath) return ITEM_PLACEHOLDER;
         if (imagePath.startsWith('http')) return imagePath; // Already a full URL
         const baseUrl = getMediaBaseUrl();
-        // Ensure imagePath starts with / for proper URL construction
-        const path = imagePath.startsWith('/') ? imagePath : `/${imagePath}`;
-        return `${baseUrl}${path}`;
+
+        // Strip leading /uploads or uploads/ to prevent duplication with baseUrl
+        let cleanPath = imagePath.replace(/^\/?uploads\//, '');
+
+        // Ensure cleanPath starts with / for joining
+        cleanPath = cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`;
+
+        return `${baseUrl}${cleanPath}`;
     };
 
     const activeSignatureExperiences = useMemo(
@@ -1199,6 +1204,8 @@ export default function App() {
             setCurrentWeddingIndex(0); // Ensure first wedding is shown
         }
     }, [activeWeddings.length, isWeddingHovered]);
+
+
     useEffect(() => {
         if (totalNearbyAttractionBanners > 1) {
             const interval = setInterval(() => {
@@ -3171,7 +3178,7 @@ export default function App() {
                                                     >
                                                         <div className="relative h-40 overflow-hidden">
                                                             <img
-                                                                src={getImageUrl(food.images?.[0]?.image_url)}
+                                                                src={getImageUrl(food.images?.[0]?.image_url ? `food_items/${food.images[0].image_url}` : null)}
                                                                 alt={food.name}
                                                                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                                                                 onError={(e) => { e.target.src = ITEM_PLACEHOLDER; }}
