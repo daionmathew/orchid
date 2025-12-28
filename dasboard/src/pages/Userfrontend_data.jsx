@@ -13,23 +13,19 @@ const getImageUrl = (imagePath) => {
     return imagePath;
   }
   const baseUrl = getMediaBaseUrl();
-  let path = imagePath.trim().replace(/\\/g, '/').replace(/([^:])\/\/+/g, '$1/');
+  let path = imagePath.trim().replace(/\\/g, '/');
+
+  // Ensure path starts with /
   if (!path.startsWith('/')) path = `/${path}`;
-  if (!path.startsWith('/static/') && !path.startsWith('/uploads/')) {
-    if (path.includes('/uploads/')) {
-      path = path.replace(/^\/uploads\//, '/static/uploads/');
-    } else if (path.includes('uploads/')) {
-      path = `/static/${path}`;
-    } else {
-      const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'];
-      if (imageExtensions.some(ext => path.toLowerCase().endsWith(ext))) {
-        if (!path.includes('static') && !path.includes('uploads')) {
-          const fileName = path.split('/').pop();
-          path = `/static/uploads/${fileName}`;
-        }
-      }
-    }
+
+  // Fix legacy or incorrect static paths
+  if (path.includes('/static/uploads/')) {
+    path = path.replace('/static/uploads/', '/uploads/');
+  } else if (path.startsWith('/static/')) {
+    // general static fix
+    path = path.replace('/static/', '/');
   }
+
   return `${baseUrl}${path}`;
 };
 
@@ -41,7 +37,7 @@ const ensureHttpUrl = (url) => {
 // Simplified Card Component
 const ContentCard = ({ item, onEdit, onDelete, type }) => {
   const getIcon = () => {
-    switch(type) {
+    switch (type) {
       case 'banner': return <FaImage className="text-blue-500" />;
       case 'gallery': return <FaCamera className="text-purple-500" />;
       case 'review': return <FaStar className="text-yellow-500" />;
@@ -61,9 +57,9 @@ const ContentCard = ({ item, onEdit, onDelete, type }) => {
     >
       {item.image_url && (
         <div className="relative h-40 overflow-hidden">
-          <img 
-            src={getImageUrl(item.image_url)} 
-            alt={item.title || item.caption || item.name || 'Content'} 
+          <img
+            src={getImageUrl(item.image_url)}
+            alt={item.title || item.caption || item.name || 'Content'}
             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
             onError={(e) => {
               e.target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTIiIGZpbGw9IiM5Y2EzYWYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5ObyBJbWFnZTwvdGV4dD48L3N2Zz4=';
@@ -89,21 +85,20 @@ const ContentCard = ({ item, onEdit, onDelete, type }) => {
           </div>
         )}
         {item.is_active !== undefined && (
-          <span className={`inline-block px-2 py-1 rounded-full text-xs font-semibold mb-2 ${
-            item.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-          }`}>
+          <span className={`inline-block px-2 py-1 rounded-full text-xs font-semibold mb-2 ${item.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+            }`}>
             {item.is_active ? 'Active' : 'Inactive'}
           </span>
         )}
         <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
-          <button 
-            onClick={() => onEdit(item)} 
+          <button
+            onClick={() => onEdit(item)}
             className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
           >
             <FaPencilAlt size={12} /> Edit
           </button>
-          <button 
-            onClick={() => onDelete(item.id)} 
+          <button
+            onClick={() => onDelete(item.id)}
             className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium"
           >
             <FaTrashAlt size={12} /> Delete
@@ -184,43 +179,43 @@ const SimpleModal = ({ isOpen, onClose, onSubmit, fields, initialData, title, is
                   {field.placeholder}
                 </label>
                 {field.type === 'file' ? (
-                  <input 
-                    type="file" 
-                    name={field.name} 
-                    onChange={handleFormChange} 
+                  <input
+                    type="file"
+                    name={field.name}
+                    onChange={handleFormChange}
                     accept="image/*"
-                    className="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" 
+                    className="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
                   />
                 ) : field.type === 'checkbox' ? (
                   <label className="flex items-center gap-2 cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      name={field.name} 
-                      checked={!!formState[field.name]} 
-                      onChange={handleFormChange} 
-                      className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" 
+                    <input
+                      type="checkbox"
+                      name={field.name}
+                      checked={!!formState[field.name]}
+                      onChange={handleFormChange}
+                      className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
                     />
                     <span className="text-sm text-gray-700">Active</span>
                   </label>
                 ) : field.type === 'textarea' ? (
-                  <textarea 
-                    name={field.name} 
-                    placeholder={field.placeholder} 
-                    value={formState[field.name] || ''} 
-                    onChange={handleFormChange} 
-                    required={field.required !== false} 
-                    rows={4} 
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors resize-none" 
+                  <textarea
+                    name={field.name}
+                    placeholder={field.placeholder}
+                    value={formState[field.name] || ''}
+                    onChange={handleFormChange}
+                    required={field.required !== false}
+                    rows={4}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors resize-none"
                   />
                 ) : (
-                  <input 
-                    type={field.type || "text"} 
-                    name={field.name} 
-                    placeholder={field.placeholder} 
-                    value={formState[field.name] || ''} 
-                    onChange={handleFormChange} 
-                    required={field.required !== false} 
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors" 
+                  <input
+                    type={field.type || "text"}
+                    name={field.name}
+                    placeholder={field.placeholder}
+                    value={formState[field.name] || ''}
+                    onChange={handleFormChange}
+                    required={field.required !== false}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
                   />
                 )}
               </div>
@@ -230,9 +225,9 @@ const SimpleModal = ({ isOpen, onClose, onSubmit, fields, initialData, title, is
                 <img src={imagePreview} alt="Preview" className="w-full h-48 object-cover rounded-lg shadow-md" />
               </div>
             )}
-            <button 
-              type="submit" 
-              disabled={isLoading} 
+            <button
+              type="submit"
+              disabled={isLoading}
               className="w-full mt-6 py-3 px-6 bg-indigo-600 text-white rounded-lg font-semibold shadow-md hover:bg-indigo-700 transition-all duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               {isLoading ? "Saving..." : "Save"}
@@ -347,94 +342,94 @@ export default function ResortCMS() {
   };
 
   const sectionConfigs = {
-    banners: { 
-      title: "Header Banner", 
-      endpoint: "/header-banner/", 
+    banners: {
+      title: "Header Banner",
+      endpoint: "/header-banner/",
       fields: [
-        { name: "title", placeholder: "Banner Title" }, 
-        { name: "subtitle", placeholder: "Banner Description" }, 
-        { name: "image", type: "file" }, 
+        { name: "title", placeholder: "Banner Title" },
+        { name: "subtitle", placeholder: "Banner Description" },
+        { name: "image", type: "file" },
         { name: "is_active", type: "checkbox", placeholder: "Is Active?" }
-      ], 
-      isMultipart: true 
+      ],
+      isMultipart: true
     },
-    gallery: { 
-      title: "Gallery Image", 
-      endpoint: "/gallery/", 
+    gallery: {
+      title: "Gallery Image",
+      endpoint: "/gallery/",
       fields: [
-        { name: "caption", placeholder: "Image Caption" }, 
+        { name: "caption", placeholder: "Image Caption" },
         { name: "image", type: "file" }
-      ], 
-      isMultipart: true 
+      ],
+      isMultipart: true
     },
-    reviews: { 
-      title: "Review", 
-      endpoint: "/reviews/", 
+    reviews: {
+      title: "Review",
+      endpoint: "/reviews/",
       fields: [
-        { name: "name", placeholder: "Customer Name" }, 
-        { name: "comment", placeholder: "Review Comment", type: "textarea" }, 
+        { name: "name", placeholder: "Customer Name" },
+        { name: "comment", placeholder: "Review Comment", type: "textarea" },
         { name: "rating", placeholder: "Rating (1-5)", type: "number" }
-      ], 
-      isMultipart: false 
+      ],
+      isMultipart: false
     },
-    resortInfo: { 
-      title: "Resort Info", 
-      endpoint: "/resort-info/", 
+    resortInfo: {
+      title: "Resort Info",
+      endpoint: "/resort-info/",
       fields: [
-        { name: "name", placeholder: "Resort Name" }, 
-        { name: "address", placeholder: "Resort Address", type: "textarea" }, 
-        { name: "facebook", placeholder: "Facebook URL" }, 
-        { name: "instagram", placeholder: "Instagram URL" }, 
-        { name: "twitter", placeholder: "Twitter URL" }, 
-        { name: "linkedin", placeholder: "LinkedIn URL" }, 
+        { name: "name", placeholder: "Resort Name" },
+        { name: "address", placeholder: "Resort Address", type: "textarea" },
+        { name: "facebook", placeholder: "Facebook URL" },
+        { name: "instagram", placeholder: "Instagram URL" },
+        { name: "twitter", placeholder: "Twitter URL" },
+        { name: "linkedin", placeholder: "LinkedIn URL" },
         { name: "is_active", type: "checkbox", placeholder: "Is Active?" }
-      ], 
-      isMultipart: false 
+      ],
+      isMultipart: false
     },
-    signatureExperiences: { 
-      title: "Signature Experience", 
-      endpoint: "/signature-experiences/", 
+    signatureExperiences: {
+      title: "Signature Experience",
+      endpoint: "/signature-experiences/",
       fields: [
-        { name: "title", placeholder: "Experience Title" }, 
-        { name: "description", placeholder: "Description", type: "textarea" }, 
-        { name: "image", type: "file" }, 
+        { name: "title", placeholder: "Experience Title" },
+        { name: "description", placeholder: "Description", type: "textarea" },
+        { name: "image", type: "file" },
         { name: "is_active", type: "checkbox", placeholder: "Is Active?" }
-      ], 
-      isMultipart: true 
+      ],
+      isMultipart: true
     },
-    planWeddings: { 
-      title: "Plan Your Wedding", 
-      endpoint: "/plan-weddings/", 
+    planWeddings: {
+      title: "Plan Your Wedding",
+      endpoint: "/plan-weddings/",
       fields: [
-        { name: "title", placeholder: "Title" }, 
-        { name: "description", placeholder: "Description", type: "textarea" }, 
-        { name: "image", type: "file" }, 
+        { name: "title", placeholder: "Title" },
+        { name: "description", placeholder: "Description", type: "textarea" },
+        { name: "image", type: "file" },
         { name: "is_active", type: "checkbox", placeholder: "Is Active?" }
-      ], 
-      isMultipart: true 
+      ],
+      isMultipart: true
     },
-    nearbyAttractions: { 
-      title: "Nearby Attraction", 
-      endpoint: "/nearby-attractions/", 
+    nearbyAttractions: {
+      title: "Nearby Attraction",
+      endpoint: "/nearby-attractions/",
       fields: [
-        { name: "title", placeholder: "Attraction Title" }, 
-        { name: "description", placeholder: "Description", type: "textarea" }, 
-        { name: "map_link", placeholder: "Google Maps Link (optional)" }, 
-        { name: "image", type: "file" }, 
+        { name: "title", placeholder: "Attraction Title" },
+        { name: "description", placeholder: "Description", type: "textarea" },
+        { name: "map_link", placeholder: "Google Maps Link (optional)" },
+        { name: "image", type: "file" },
         { name: "is_active", type: "checkbox", placeholder: "Is Active?" }
-      ], 
-      isMultipart: true 
+      ],
+      isMultipart: true
     },
-    nearbyAttractionBanners: { 
-      title: "Nearby Attraction Banner", 
-      endpoint: "/nearby-attraction-banners/", 
+    nearbyAttractionBanners: {
+      title: "Nearby Attraction Banner",
+      endpoint: "/nearby-attraction-banners/",
       fields: [
-        { name: "title", placeholder: "Banner Title" }, 
-        { name: "subtitle", placeholder: "Banner Subtitle", type: "textarea" }, 
-        { name: "image", type: "file" }, 
+        { name: "title", placeholder: "Banner Title" },
+        { name: "subtitle", placeholder: "Banner Subtitle", type: "textarea" },
+        { name: "image", type: "file" },
         { name: "is_active", type: "checkbox", placeholder: "Is Active?" }
-      ], 
-      isMultipart: true 
+      ],
+      isMultipart: true
     },
   };
 
@@ -481,18 +476,16 @@ export default function ResortCMS() {
               <button
                 key={section.key}
                 onClick={() => setActiveSection(section.key)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-                  activeSection === section.key
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${activeSection === section.key
                     ? 'bg-indigo-600 text-white shadow-md'
                     : 'text-gray-700 hover:bg-gray-100'
-                }`}
+                  }`}
               >
                 {section.icon}
                 <span>{section.label}</span>
                 {section.data.length > 0 && (
-                  <span className={`px-2 py-0.5 rounded-full text-xs ${
-                    activeSection === section.key ? 'bg-white text-indigo-600' : 'bg-gray-200 text-gray-600'
-                  }`}>
+                  <span className={`px-2 py-0.5 rounded-full text-xs ${activeSection === section.key ? 'bg-white text-indigo-600' : 'bg-gray-200 text-gray-600'
+                    }`}>
                     {section.data.length}
                   </span>
                 )}
