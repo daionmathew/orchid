@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError # Added import
 from typing import List, Optional
 import os
 import shutil
@@ -176,7 +177,20 @@ async def create_item(
         )
         
         db.add(created_item)
-        db.flush()  # Get the ID
+        try:
+            db.flush()  # Get the ID
+        except IntegrityError as e:
+            db.rollback()
+            err_msg = str(e)
+            if "ix_inventory_items_item_code" in err_msg:
+                raise HTTPException(status_code=400, detail="Item Code already exists. Please use a unique code.")
+            elif "ix_inventory_items_barcode" in err_msg:
+                raise HTTPException(status_code=400, detail="Barcode already exists.")
+            elif "ix_inventory_items_name" in err_msg: # Assuming name might be unique too
+                 raise HTTPException(status_code=400, detail="Item Name already exists.")
+            else:
+                print(f"Database Error: {e}")
+                raise HTTPException(status_code=400, detail=f"Database error: {err_msg}")
         
         # Create transaction record for initial stock if provided
         if initial_stock and initial_stock > 0:
