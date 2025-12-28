@@ -138,6 +138,12 @@ async def create_item(
         # Create item
         from app.models.inventory import InventoryItem, InventoryTransaction, Location, LocationStock
         
+        # Sanitize optional unique fields
+        if barcode == "":
+            barcode = None
+        if vendor_item_code == "":
+            vendor_item_code = None
+        
         created_item = InventoryItem(
             name=name,
             item_code=item_code,
