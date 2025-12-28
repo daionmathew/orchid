@@ -3178,7 +3178,7 @@ export default function App() {
                                                     >
                                                         <div className="relative h-40 overflow-hidden">
                                                             <img
-                                                                src={getImageUrl(food.images?.[0]?.image_url ? `food_items/${food.images[0].image_url}` : null)}
+                                                                src={getImageUrl(food.images?.[0]?.image_url)}
                                                                 alt={food.name}
                                                                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                                                                 onError={(e) => { e.target.src = ITEM_PLACEHOLDER; }}
