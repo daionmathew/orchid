@@ -43,7 +43,10 @@ def clear_transactional_data(db: Session):
         
         # 3. Clear Service Requests & Assignments
         print("   ➤ Clearing service requests...")
-        db.query(EmployeeInventoryAssignment).delete()
+        try:
+            db.query(EmployeeInventoryAssignment).delete()
+        except Exception as e:
+            print(f"   ⚠️ Skipping EmployeeInventoryAssignment (Table likely missing): {e}")
         db.query(AssignedService).delete()
         db.query(ServiceRequest).delete()
         
