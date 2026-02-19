@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime, Boolean
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from datetime import datetime
 from app.database import Base
 
@@ -9,6 +9,8 @@ class FoodOrder(Base):
     id = Column(Integer, primary_key=True, index=True)
     room_id = Column(Integer, ForeignKey("rooms.id"))
     amount = Column(Float)  # Base amount without GST
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=True) # Link to booking
+    package_booking_id = Column(Integer, ForeignKey("package_bookings.id"), nullable=True) # Link to package booking
     assigned_employee_id = Column(Integer, ForeignKey("employees.id"))
     status = Column(String, default="pending")
     billing_status = Column(String, default="unbilled")  # "unbilled", "billed", "paid"
@@ -21,13 +23,16 @@ class FoodOrder(Base):
     is_deleted = Column(Boolean, default=False, nullable=False)  # Soft delete flag
     created_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
     prepared_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow) # This is UTC, we should handle IST conversion in CRUD if needed or move to IST here.
+    # Actually, let's keep UTC for server and convert in CRUD.
 
     items = relationship("FoodOrderItem", back_populates="order", cascade="all, delete-orphan")
     employee = relationship("Employee", foreign_keys=[assigned_employee_id])
     creator = relationship("Employee", foreign_keys=[created_by_id])
     chef = relationship("Employee", foreign_keys=[prepared_by_id])
     room = relationship("Room", back_populates="food_orders")
+    booking = relationship("Booking", backref="food_orders")
+    package_booking = relationship("PackageBooking", backref="food_orders")
 
 class FoodOrderItem(Base):
     __tablename__ = "food_order_items"

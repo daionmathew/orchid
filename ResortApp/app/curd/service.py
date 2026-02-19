@@ -432,12 +432,27 @@ def create_assigned_service(db: Session, assigned: AssignedServiceCreate):
         
         print(f"[DEBUG] Total inventory items to assign (template + extra): {len(service_inventory_items)}")
         
+        # Try to link to a booking if not provided
+        booking_id = assigned_dict.get('booking_id')
+        package_booking_id = assigned_dict.get('package_booking_id')
+        
+        if not booking_id and not package_booking_id:
+            from app.curd.foodorder import get_booking_for_room
+            b_id, is_pkg = get_booking_for_room(assigned_dict['room_id'], db)
+            if b_id:
+                if is_pkg:
+                    package_booking_id = b_id
+                else:
+                    booking_id = b_id
+
         # Create AssignedService instance (status will use default from model)
         try:
             db_assigned = AssignedService(
                 service_id=assigned_dict['service_id'],
                 employee_id=assigned_dict['employee_id'],
                 room_id=assigned_dict['room_id'],
+                booking_id=booking_id,
+                package_booking_id=package_booking_id,
                 override_charges=assigned_dict.get('override_charges'),
                 billing_status=assigned_dict.get('billing_status', 'unbilled')  # Explicitly set billing status
             )
@@ -648,7 +663,7 @@ def create_assigned_service(db: Session, assigned: AssignedServiceCreate):
         print(traceback.format_exc())
         raise ValueError(error_msg) from e
 
-def get_assigned_services(db: Session, skip: int = 0, limit: int = 100, employee_id: Optional[int] = None, status: Optional[str] = None):
+def get_assigned_services(db: Session, skip: int = 0, limit: int = 100, employee_id: Optional[int] = None, status: Optional[str] = None, room_id: Optional[int] = None, booking_id: Optional[int] = None, package_booking_id: Optional[int] = None):
     """
     Get assigned services - ultra-simplified version for maximum performance.
     """
@@ -673,6 +688,15 @@ def get_assigned_services(db: Session, skip: int = 0, limit: int = 100, employee
         if status:
             # Handle enum vs string comparison if needed, though SQLAlchemy usually handles it if we pass the string value that matches the enum
             query = query.filter(AssignedService.status == status)
+
+        if room_id:
+            query = query.filter(AssignedService.room_id == room_id)
+            
+        if booking_id:
+            query = query.filter(AssignedService.booking_id == booking_id)
+            
+        if package_booking_id:
+            query = query.filter(AssignedService.package_booking_id == package_booking_id)
 
         # Execute query
         assigned_services = query.order_by(AssignedService.id.desc()).offset(skip).limit(limit).all()
@@ -709,6 +733,15 @@ def update_assigned_service_status(db: Session, assigned_id: int, update_data: A
         # Handle both enum and string status values
         new_status = update_data.status.value if hasattr(update_data.status, 'value') else str(update_data.status)
         assigned.status = update_data.status
+        
+        # Track started_at and completed_at
+        if new_status == "in_progress" and not assigned.started_at:
+            assigned.started_at = datetime.utcnow()
+            print(f"[DEBUG] Set started_at for service {assigned_id}: {assigned.started_at}")
+        elif new_status == "completed":
+            assigned.completed_at = datetime.utcnow()
+            assigned.last_used_at = assigned.completed_at # Keep legacy field in sync
+            print(f"[DEBUG] Set completed_at for service {assigned_id}: {assigned.completed_at}")
     else:
         # If no status update, use current status
         new_status = old_status.value if hasattr(old_status, 'value') else str(old_status)
@@ -726,9 +759,7 @@ def update_assigned_service_status(db: Session, assigned_id: int, update_data: A
         except Exception as e:
              print(f"Notification error: {e}")
     if new_status == "completed" and str(old_status) != "completed":
-        # Set completed time (last_used_at)
-        assigned.last_used_at = datetime.utcnow()
-        print(f"[DEBUG] Set completed time (last_used_at) for service {assigned_id}: {assigned.last_used_at}")
+        # Additional logic for completion (e.g. inventory)
         try:
             # Use a nested transaction (savepoint) so that if inventory logic fails,
             # it doesn't abort the main transaction/session.
@@ -838,15 +869,23 @@ def update_assigned_service_status(db: Session, assigned_id: int, update_data: A
                     
                     for return_item in update_data.inventory_returns:
                         try:
-                            print(f"[DEBUG]   - Item {return_item.inventory_item_id}, Qty {return_item.quantity_returned}")
+                            print(f"[DEBUG]   - Processing return item: {return_item}")
 
-                            assignment = db.query(EmployeeInventoryAssignment).filter(
-                                EmployeeInventoryAssignment.item_id == return_item.inventory_item_id,
-                                EmployeeInventoryAssignment.assigned_service_id == assigned_id
-                            ).first()
+                            assignment = None
+                            if hasattr(return_item, 'assignment_id') and return_item.assignment_id:
+                                assignment = db.query(EmployeeInventoryAssignment).filter(
+                                    EmployeeInventoryAssignment.id == return_item.assignment_id,
+                                    EmployeeInventoryAssignment.assigned_service_id == assigned_id
+                                ).first()
+                            
+                            if not assignment and hasattr(return_item, 'inventory_item_id') and return_item.inventory_item_id:
+                                assignment = db.query(EmployeeInventoryAssignment).filter(
+                                    EmployeeInventoryAssignment.item_id == return_item.inventory_item_id,
+                                    EmployeeInventoryAssignment.assigned_service_id == assigned_id
+                                ).first()
                             
                             if not assignment:
-                                print(f"[WARNING] Inventory assignment for item {return_item.inventory_item_id} not found for service {assigned_id}")
+                                print(f"[WARNING] Inventory assignment not found for item {getattr(return_item, 'inventory_item_id', 'unknown')} / assignment {getattr(return_item, 'assignment_id', 'unknown')} for service {assigned_id}")
                                 continue
                             
                             # Update used quantity if provided
@@ -881,7 +920,7 @@ def update_assigned_service_status(db: Session, assigned_id: int, update_data: A
                             # Add stock back to inventory and location
                             item = db.query(InventoryItem).filter(InventoryItem.id == assignment.item_id).first()
                             if item:
-                                item.current_stock += quantity_returned
+                                item.current_stock += round(quantity_returned, 4)
                                 
                                 # If we have a return location, update LocationStock
                                 if item_return_location:
@@ -894,13 +933,13 @@ def update_assigned_service_status(db: Session, assigned_id: int, update_data: A
                                         ).first()
                                         
                                         if loc_stock:
-                                            loc_stock.quantity += quantity_returned
+                                            loc_stock.quantity += round(quantity_returned, 4)
                                         else:
                                             # Create new stock entry at location
                                             new_stock = LocationStock(
                                                 location_id=item_return_location.id,
                                                 item_id=item.id,
-                                                quantity=quantity_returned,
+                                                quantity=round(quantity_returned, 4),
                                                 last_updated=datetime.utcnow()
                                             )
                                             db.add(new_stock)
@@ -914,10 +953,10 @@ def update_assigned_service_status(db: Session, assigned_id: int, update_data: A
                                     transaction = InventoryTransaction(
                                         item_id=assignment.item_id,
                                         # location_id removed as it does not exist in InventoryTransaction model
-                                        transaction_type="Stock Received",
-                                        quantity=quantity_returned,
+                                        transaction_type="transfer_in",
+                                        quantity=round(quantity_returned, 4),
                                         unit_price=item.unit_price,
-                                        total_amount=item.unit_price * quantity_returned if item.unit_price else 0.0,
+                                        total_amount=item.unit_price * round(quantity_returned, 4) if item.unit_price else 0.0,
                                         reference_number=f"SVC-RETURN-{assigned_id}",
                                         department=item.category.parent_department if item.category else "Housekeeping",
                                         notes=f"Return to {item_return_location.name if item_return_location else 'Warehouse'} - {assigned.service.name if assigned.service else 'Unknown'} - {return_item.notes or 'Service completed'}",
@@ -941,12 +980,79 @@ def update_assigned_service_status(db: Session, assigned_id: int, update_data: A
             print(f"[ERROR] Fatal error processing inventory returns: {str(e)}")
             print(traceback.format_exc())
             # Don't fail the status update if return processing fails
+
+        # Sync back to ServiceRequest if this assignment is completed
+        try:
+            from app.models.service_request import ServiceRequest
+            # Find matching service requests for this room
+            # If we are just updating billing_status, we might want to find 'completed' ones too
+            requests = db.query(ServiceRequest).filter(
+                ServiceRequest.room_id == assigned.room_id,
+                ServiceRequest.status.notin_(["cancelled"]) # Allow 'completed' to update their food orders
+            ).all()
+            
+            print(f"[DEBUG-SYNC] Found {len(requests)} ServiceRequests for Room {assigned.room_id} to Sync")
+            
+            for req in requests:
+                # Check if employee matches (if assigned) and if type matches (heuristic)
+                employee_match = (req.employee_id == assigned.employee_id or req.employee_id is None)
+                type_match = False
+                
+                req_type = str(req.request_type).lower()
+                svc_name = str(assigned.service.name).lower()
+                
+                if req_type == "cleaning" and "clean" in svc_name:
+                    type_match = True
+                elif req_type == "refill" and "refill" in svc_name:
+                    type_match = True
+                elif req_type in ["delivery", "food_delivery"]:
+                    if req.food_order_id:
+                        type_match = True
+                    elif any(term in svc_name for term in ["food", "delivery", "breakfast", "lunch", "dinner", "milk", "water", "tea", "coffee", "snack"]):
+                        type_match = True
+                
+                # Check if this request was created recently (last 7 days)
+                is_recent = True
+                if req.created_at:
+                    is_recent = (datetime.utcnow() - req.created_at).total_seconds() < 604800 # 7 days
+                
+                if employee_match and type_match and is_recent:
+                    # Only update status if not already completed
+                    if req.status != "completed":
+                        req.status = "completed"
+                        req.completed_at = datetime.utcnow()
+                    
+                    # ALWAYS propagate billing_status if we have one (Paid/Unpaid)
+                    # Priority: 1. Input data 2. Database state (if not default)
+                    current_billing = update_data.billing_status or (assigned.billing_status if assigned.billing_status != "unbilled" else None)
+                    
+                    if current_billing:
+                        print(f"[DEBUG-SYNC] Syncing Req {req.id} (status={req.status}, billing={current_billing})")
+                        # Update linked FoodOrder if it exists
+                        if req.food_order_id:
+                            try:
+                                from app.models.foodorder import FoodOrder
+                                food_order = db.query(FoodOrder).filter(FoodOrder.id == req.food_order_id).first()
+                                if food_order:
+                                    # Always update order status to completed if service is completed
+                                    food_order.status = "completed"
+                                    # Update billing status
+                                    food_order.billing_status = current_billing
+                                    print(f"[INFO] Auto-updated FoodOrder {food_order.id} status to completed (billing: {food_order.billing_status})")
+                            except Exception as fo_err:
+                                print(f"[WARNING] Failed to update linked FoodOrder: {fo_err}")
+                
+        except Exception as sync_err:
+            print(f"[WARNING] Status sync to ServiceRequest failed: {sync_err}")
+            import traceback
+            traceback.print_exc()
     
     if commit:
         db.commit()
     else:
         db.flush()
-        
+    
+    print(f"[DEBUG] Finished update_assigned_service_status for {assigned_id}. Final Status: {assigned.status}, Billing: {assigned.billing_status}")
     db.refresh(assigned)
     return assigned
 

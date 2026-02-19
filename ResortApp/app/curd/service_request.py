@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session, joinedload
 from app.models.service_request import ServiceRequest
-from app.models.foodorder import FoodOrder
+from app.models.foodorder import FoodOrder, FoodOrderItem
 from app.models.room import Room
 from app.models.employee import Employee
 from app.schemas.service_request import ServiceRequestCreate, ServiceRequestUpdate
@@ -59,71 +59,114 @@ def create_cleaning_service_request(db: Session, room_id: int, room_number: str,
 
 def create_refill_service_request(db: Session, room_id: int, room_number: str, guest_name: str = None, checkout_id: int = None):
     """
-    Create a refill service request after checkout.
-    This is automatically triggered when a room is checked out to replenish inventory items.
-    Refill requirements are calculated from the checkout consumables audit.
+    Create a refill service request after checkout for DAMAGED FIXED ASSETS ONLY.
+    This service is specifically for replacing damaged permanent room fixtures/assets,
+    NOT for consumables, rental items, or other inventory.
     """
     import json
     refill_items = []
     
     # Get refill requirements from checkout verification if checkout_id is provided
     if checkout_id:
-        from app.models.checkout import CheckoutVerification
-        from app.models.inventory import InventoryItem
+        from app.models.checkout import CheckoutVerification, CheckoutRequest as CheckoutRequestModel
+        from app.models.inventory import InventoryItem, AssetMapping, InventoryCategory
+        from app.models.room import Room
         
-        # Get the checkout verification for this room
-        verification = db.query(CheckoutVerification).filter(
-            CheckoutVerification.checkout_id == checkout_id,
-            CheckoutVerification.room_number == room_number
+        # Get the room to access its inventory location
+        room = db.query(Room).filter(Room.id == room_id).first()
+        if not room or not room.inventory_location_id:
+            return None  # No refill needed if room has no inventory location
+        
+        # Get the checkout request for this checkout to access inventory_data
+        checkout_request = db.query(CheckoutRequestModel).filter(
+            CheckoutRequestModel.checkout_id == checkout_id,
+            CheckoutRequestModel.room_number == room_number
         ).first()
         
-        if verification and verification.consumables_audit_data:
-            # Extract consumables data and calculate refill requirements
-            consumables_data = verification.consumables_audit_data
-            
-            for item_id_str, item_data in consumables_data.items():
+        if checkout_request and checkout_request.inventory_data:
+            # Process inventory data to find ONLY damaged fixed assets
+            for item in checkout_request.inventory_data:
                 try:
-                    item_id = int(item_id_str)
-                    actual_consumed = item_data.get("actual", 0)
+                    item_id = item.get('item_id')
+                    damage_qty = float(item.get('damage_qty', 0))
+                    is_fixed_asset = item.get('is_fixed_asset', False)
+                    
+                    # CRITICAL FILTER: Only include items that are:
+                    # 1. Fixed assets (is_fixed_asset = True)
+                    # 2. Damaged (damage_qty > 0)
+                    # 3. Assigned to this room (via AssetMapping)
+                    if not is_fixed_asset or damage_qty <= 0:
+                        continue
+                    
+                    # Verify this is a permanently assigned fixed asset
+                    asset_mapping = db.query(AssetMapping).filter(
+                        AssetMapping.location_id == room.inventory_location_id,
+                        AssetMapping.item_id == item_id,
+                        AssetMapping.is_active == True
+                    ).first()
+                    
+                    if not asset_mapping:
+                        # Not a permanently assigned asset, skip
+                        continue
                     
                     # Get inventory item details
                     inv_item = db.query(InventoryItem).filter(InventoryItem.id == item_id).first()
-                    if inv_item and actual_consumed > 0:
-                        # What was consumed needs to be refilled
+                    if inv_item:
+                        # Verify it's truly a fixed asset from category
+                        category = db.query(InventoryCategory).filter(
+                            InventoryCategory.id == inv_item.category_id
+                        ).first()
+                        
+                        is_asset_category = (
+                            category and 
+                            (category.is_asset_fixed or 
+                             (category.classification and 'asset' in category.classification.lower()))
+                        )
+                        
+                        if not is_asset_category and not inv_item.is_asset_fixed:
+                            # Not truly a fixed asset, skip
+                            continue
+                        
+                        # This is a damaged fixed asset that needs replacement
                         refill_items.append({
                             "item_id": item_id,
                             "item_name": inv_item.name,
                             "item_code": inv_item.item_code,
-                            "quantity_to_refill": actual_consumed,
-                            "unit": inv_item.unit or "pcs"
+                            "quantity_to_refill": damage_qty,
+                            "unit": inv_item.unit or "pcs",
+                            "is_fixed_asset": True
                         })
-                except (ValueError, KeyError):
+                except (ValueError, KeyError, TypeError) as e:
+                    print(f"[REFILL] Error processing item: {e}")
                     continue
     
+    # Only create service request if there are damaged fixed assets to replace
+    if not refill_items:
+        print(f"[REFILL] No damaged fixed assets found for room {room_number}, skipping refill service request")
+        return None
+    
     # Build description with refill requirements
-    description_parts = [f"Room inventory refill required after checkout - Room {room_number}"]
+    description_parts = [f"Replace damaged fixed assets in Room {room_number}"]
     if guest_name:
         description_parts.append(f"Previous Guest: {guest_name}")
     
-    if refill_items:
-        description_parts.append("Refill Requirements:")
-        for item in refill_items:
-            description_parts.append(f"- {item['item_name']}: {item['quantity_to_refill']} {item['unit']}")
-    else:
-        description_parts.append("Standard inventory refill required")
+    description_parts.append("Damaged Assets to Replace:")
+    for item in refill_items:
+        description_parts.append(f"- {item['item_name']}: {item['quantity_to_refill']} {item['unit']}")
     
     request = ServiceRequest(
-        food_order_id=None,  # Refill requests don't have food orders
+        food_order_id=None,
         room_id=room_id,
         employee_id=None,  # Will be assigned later
         request_type="refill",
         description=" | ".join(description_parts),
-        refill_data=json.dumps(refill_items) if refill_items else None,  # Store as JSON
+        refill_data=json.dumps(refill_items) if refill_items else None,
         status="pending"
     )
     db.add(request)
     db.commit()
     db.refresh(request)
+    print(f"[REFILL] Created refill service request for {len(refill_items)} damaged fixed assets in room {room_number}")
     return request
 
 def create_return_items_service_request(db: Session, room_id: int, room_number: str, guest_name: str = None, checkout_id: int = None):
@@ -209,7 +252,7 @@ def create_return_items_service_request(db: Session, room_id: int, room_number: 
 
 def get_service_requests(db: Session, skip: int = 0, limit: int = 100, status: Optional[str] = None, room_id: Optional[int] = None, employee_id: Optional[int] = None):
     query = db.query(ServiceRequest).options(
-        joinedload(ServiceRequest.food_order),
+        joinedload(ServiceRequest.food_order).joinedload(FoodOrder.items).joinedload(FoodOrderItem.food_item),
         joinedload(ServiceRequest.room),
         joinedload(ServiceRequest.employee)
     )
@@ -231,6 +274,8 @@ def get_service_requests(db: Session, skip: int = 0, limit: int = 100, status: O
         if req.food_order:
             req.food_order_amount = req.food_order.amount
             req.food_order_status = req.food_order.status
+            req.food_order_billing_status = req.food_order.billing_status
+            req.food_items = req.food_order.items
         if req.room:
             req.room_number = req.room.number
         # Always set employee_name, even if None
@@ -243,12 +288,16 @@ def get_service_request(db: Session, request_id: int):
         joinedload(ServiceRequest.food_order),
         joinedload(ServiceRequest.room),
         joinedload(ServiceRequest.employee)
+    ).options(
+        joinedload(ServiceRequest.food_order).joinedload(FoodOrder.items).joinedload(FoodOrderItem.food_item)
     ).filter(ServiceRequest.id == request_id).first()
     
     if request:
         if request.food_order:
             request.food_order_amount = request.food_order.amount
             request.food_order_status = request.food_order.status
+            request.food_order_billing_status = request.food_order.billing_status
+            request.food_items = request.food_order.items
         if request.room:
             request.room_number = request.room.number
         # Always set employee_name, even if None
@@ -270,7 +319,10 @@ def update_service_request(db: Session, request_id: int, update_data: ServiceReq
     
     if update_data.status is not None:
         request.status = update_data.status
-        if update_data.status == "completed":
+        if update_data.status == "in_progress" and not request.started_at:
+            request.started_at = datetime.utcnow()
+            print(f"[DEBUG] Set started_at for ServiceRequest {request_id}: {request.started_at}")
+        elif update_data.status == "completed":
             request.completed_at = datetime.utcnow()
             
             # If this is a delivery request with a food order, update the food order status
@@ -287,6 +339,86 @@ def update_service_request(db: Session, request_id: int, update_data: ServiceReq
                         food_order.billing_status = "unpaid"
                     
                     print(f"[INFO] Food order {food_order.id} marked as completed (billing: {food_order.billing_status}) due to delivery service completion")
+
+            # NEW: Handle Inventory Movement for 'return_items' completion
+            if request.request_type == "return_items" and is_completing:
+                try:
+                    import json
+                    from app.models.inventory import LocationStock, InventoryTransaction, Location, InventoryItem, AssetMapping
+                    
+                    # 1. Determine target location (default to Warehouse if not provided)
+                    target_loc_id = update_data.return_location_id
+                    if not target_loc_id:
+                         wh = db.query(Location).filter(Location.location_type == "WAREHOUSE").first()
+                         target_loc_id = wh.id if wh else None
+                    
+                    if target_loc_id and request.refill_data and request.room_id:
+                        room = db.query(Room).filter(Room.id == request.room_id).first()
+                        return_items = json.loads(request.refill_data)
+                        
+                        if room and room.inventory_location_id:
+                            for item_data in return_items:
+                                item_id = item_data.get("item_id")
+                                qty_to_move = float(item_data.get("quantity_to_return", 0))
+                                is_rentable = item_data.get("is_rentable", False)
+                                
+                                if item_id and qty_to_move > 0:
+                                    # Find room stock
+                                    room_stock = db.query(LocationStock).filter(
+                                        LocationStock.location_id == room.inventory_location_id,
+                                        LocationStock.item_id == item_id
+                                    ).first()
+                                    
+                                    # Only move if room has enough stock (capped to avoid inconsistencies)
+                                    actual_move = min(qty_to_move, room_stock.quantity if room_stock else 0)
+                                    if actual_move > 0:
+                                        # Deduct from Room
+                                        room_stock.quantity -= actual_move
+                                        
+                                        # Add to Target Location (e.g. Warehouse)
+                                        target_stock = db.query(LocationStock).filter(
+                                            LocationStock.location_id == target_loc_id,
+                                            LocationStock.item_id == item_id
+                                        ).first()
+                                        
+                                        if target_stock:
+                                            target_stock.quantity += actual_move
+                                        else:
+                                            db.add(LocationStock(
+                                                location_id=target_loc_id,
+                                                item_id=item_id,
+                                                quantity=actual_move
+                                            ))
+                                        
+                                        # CRITICAL FIX: Deactivate AssetMapping for fixed assets/rentables
+                                        # This ensures they don't show in room inventory anymore
+                                        if is_rentable:
+                                            # Deactivate asset mappings for this item in this room
+                                            asset_mappings = db.query(AssetMapping).filter(
+                                                AssetMapping.location_id == room.inventory_location_id,
+                                                AssetMapping.item_id == item_id,
+                                                AssetMapping.is_active == True
+                                            ).all()
+                                            
+                                            deactivated_count = 0
+                                            for mapping in asset_mappings:
+                                                if deactivated_count < actual_move:
+                                                    mapping.is_active = False
+                                                    deactivated_count += 1
+                                                    print(f"[INVENTORY] Deactivated AssetMapping for {item_data.get('item_name')} in Room {room.number}")
+                                        
+                                        # Log Transaction
+                                        db.add(InventoryTransaction(
+                                            item_id=item_id,
+                                            transaction_type="transfer",
+                                            quantity=actual_move,
+                                            reference_number=f"RET-SR-{request.id}",
+                                            notes=f"Return from Room {room.number} via Service Request",
+                                            created_by=update_data.employee_id or request.employee_id
+                                        ))
+                                        print(f"[INVENTORY] Moved {actual_move} of item {item_id} from Room {room.number} to Loc {target_loc_id}")
+                except Exception as e:
+                    print(f"[ERROR] Failed to process return items inventory movement: {e}")
 
             # Sync with AssignedService: Heuristic to auto-complete duplicate manual assignments
             if is_completing:

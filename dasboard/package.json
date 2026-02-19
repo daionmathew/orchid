@@ -10,6 +10,7 @@
     "@tanstack/react-table": "^8.11.2",
     "ajv": "^8.17.1",
     "axios": "^1.6.2",
+    "browser-image-compression": "^2.0.2",
     "chart.js": "^4.5.0",
     "chartjs-adapter-date-fns": "^3.0.0",
     "date-fns": "^3.0.6",
@@ -90,5 +91,5 @@
       "last 1 safari version"
     ]
   },
-  "homepage": "/orchid/admin"
+  "homepage": "/orchidadmin"
 }

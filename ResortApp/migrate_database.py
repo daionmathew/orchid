@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database Migration Script for Pomma Holidays
+Database Migration Script for Orchid Resort
 Run this script on the production server to add missing columns.
 
 Usage:
@@ -20,89 +20,81 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from app.database import SQLALCHEMY_DATABASE_URL
 
 def migrate_database():
-    """Add missing columns to packages and rooms tables."""
+    """Add missing columns to various tables."""
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
 
     try:
         print("=" * 60)
-        print("Pomma Holidays - Database Migration")
+        print("Orchid Resort - Comprehensive Database Migration")
         print("=" * 60)
         print()
 
-        # Migrate packages table
-        print("Step 1/2: Migrating 'packages' table...")
-        print("-" * 60)
-        
-        try:
-            db.execute(text("ALTER TABLE packages ADD COLUMN IF NOT EXISTS booking_type VARCHAR(50)"))
-            print("✓ Added 'booking_type' column to packages table")
-        except Exception as e:
-            print(f"⚠️  booking_type column: {e}")
-        
-        try:
-            db.execute(text("ALTER TABLE packages ADD COLUMN IF NOT EXISTS room_types TEXT"))
-            print("✓ Added 'room_types' column to packages table")
-        except Exception as e:
-            print(f"⚠️  room_types column: {e}")
-        
-        db.commit()
-        print()
-
-        # Migrate rooms table
-        print("Step 2/2: Migrating 'rooms' table...")
-        print("-" * 60)
-        
-        room_features = [
-            ('air_conditioning', 'Air Conditioning'),
-            ('wifi', 'Free Wifi'),
-            ('bathroom', 'Private Bathroom'),
-            ('living_area', 'Living Room'),
-            ('terrace', 'Terrace'),
-            ('parking', 'Free Parking'),
-            ('kitchen', 'Kitchen'),
-            ('family_room', 'Family Room'),
-            ('bbq', 'BBQ'),
-            ('garden', 'Garden'),
-            ('dining', 'Dining Area'),
-            ('breakfast', 'Breakfast'),
-        ]
-
-        for column_name, display_name in room_features:
+        # Helper to add column if not exists
+        def add_column(table, column, type_def):
             try:
-                db.execute(text(f"ALTER TABLE rooms ADD COLUMN IF NOT EXISTS {column_name} BOOLEAN DEFAULT FALSE"))
-                print(f"✓ Added '{column_name}' column to rooms table")
+                # Check column existence using information_schema
+                check_sql = text(f"SELECT column_name FROM information_schema.columns WHERE table_name='{table}' AND column_name='{column}'")
+                result = db.execute(check_sql).fetchone()
+                if not result:
+                    print(f"Adding {column} to {table}...")
+                    db.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {type_def}"))
+                    db.commit()
+                    print(f"✓ Successfully added '{column}' to {table}")
+                else:
+                    print(f"- Column '{column}' already exists in {table}")
             except Exception as e:
-                print(f"⚠️  {column_name} column: {e}")
-        
-        db.commit()
+                print(f"⚠️  Error adding {column} to {table}: {e}")
+                db.rollback()
+
+        # Table: packages
+        print("Migrating 'packages' table...")
+        add_column('packages', 'booking_type', 'VARCHAR(50) DEFAULT \'room_type\'')
+        add_column('packages', 'room_types', 'TEXT')
+        add_column('packages', 'status', 'VARCHAR DEFAULT \'active\'')
+        add_column('packages', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         print()
+
+        # Table: rooms (Features)
+        print("Migrating 'rooms' table features...")
+        room_features = [
+            'air_conditioning', 'wifi', 'bathroom', 'living_area', 'terrace', 
+            'parking', 'kitchen', 'family_room', 'bbq', 'garden', 'dining', 'breakfast'
+        ]
+        for feat in room_features:
+            add_column('rooms', feat, 'BOOLEAN DEFAULT FALSE')
+        print()
+
+        # Table: service_requests
+        print("Migrating 'service_requests' table...")
+        add_column('service_requests', 'billing_status', 'VARCHAR')
+        add_column('service_requests', 'started_at', 'TIMESTAMP')
+        print()
+
+        # Table: package_bookings
+        print("Migrating 'package_bookings' table...")
+        add_column('package_bookings', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+        print()
+
+        # Table: assigned_services
+        print("Migrating 'assigned_services' table...")
+        add_column('assigned_services', 'started_at', 'TIMESTAMP')
+        add_column('assigned_services', 'completed_at', 'TIMESTAMP')
+        add_column('assigned_services', 'override_charges', 'DOUBLE PRECISION')
+        print()
+
         print("=" * 60)
         print("✅ Database migration completed successfully!")
         print("=" * 60)
-        print()
-        print("Next steps:")
-        print("1. Restart the backend service: sudo systemctl restart resort.service")
-        print("2. Verify the application is working")
-        print("3. Check logs: sudo journalctl -u resort.service -n 50")
 
     except Exception as e:
-        db.rollback()
-        print()
-        print("=" * 60)
-        print("❌ Error during database migration:")
-        print("=" * 60)
-        print(f"Error: {e}")
-        print()
+        print(f"❌ Migration failed: {e}")
         import traceback
         traceback.print_exc()
-        print()
-        print("Please check the error above and try again.")
         sys.exit(1)
     finally:
         db.close()
 
 if __name__ == "__main__":
     migrate_database()
-

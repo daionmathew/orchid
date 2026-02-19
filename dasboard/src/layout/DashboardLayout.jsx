@@ -215,7 +215,6 @@ export default function DashboardLayout({ children }) {
     { label: "Dashboard", icon: <Home size={18} />, to: "/dashboard" },
     { label: "Finance", icon: <UserCircle size={18} />, to: "/account", roles: ["admin"] },
     { label: "Bookings", icon: <CalendarCheck2 size={18} />, to: "/bookings" },
-    { label: "Packages", icon: <Package size={18} />, to: "/packages" },
     { label: "Services", icon: <ConciergeBell size={18} />, to: "/services" },
     { label: "Role", icon: <ShieldCheck size={18} />, to: "/roles", roles: ["admin"] },
     { label: "Expenses", icon: <PiggyBank size={18} />, to: "/expenses" },

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import DashboardLayout from '../layout/DashboardLayout';
 import axios from 'axios';
 import { getApiBaseUrl } from '../utils/env';
+import { formatDateTimeLong } from '../utils/dateUtils';
 
 const ActivityLogs = () => {
     const [logs, setLogs] = useState([]);
@@ -11,10 +12,15 @@ const ActivityLogs = () => {
     const limit = 50;
 
     const [stats, setStats] = useState(null);
+    const [users, setUsers] = useState([]);
     const [filters, setFilters] = useState({
         method: '',
         path: '',
         status_code: '',
+        user_name: '',
+        module: '',
+        start_date: '',
+        end_date: '',
         hours: '24'
     });
 
@@ -60,6 +66,10 @@ const ActivityLogs = () => {
             if (filters.method) params.append('method', filters.method);
             if (filters.path) params.append('path', filters.path);
             if (filters.status_code) params.append('status_code', filters.status_code);
+            if (filters.user_name) params.append('user_name', filters.user_name);
+            if (filters.module) params.append('module', filters.module);
+            if (filters.start_date) params.append('start_date', filters.start_date);
+            if (filters.end_date) params.append('end_date', filters.end_date);
             if (filters.hours) params.append('hours', filters.hours);
 
             params.append('limit', limit);
@@ -108,66 +118,136 @@ const ActivityLogs = () => {
         });
     };
 
-    const getStatusColor = (statusCode) => {
-        if (statusCode >= 200 && statusCode < 300) return 'text-green-600';
-        if (statusCode >= 400 && statusCode < 500) return 'text-yellow-600';
-        if (statusCode >= 500) return 'text-red-600';
-        return 'text-gray-600';
-    };
+    // Group logs that are identical and contiguous within 5 seconds
+    const groupedLogs = useMemo(() => {
+        const result = [];
+        logs.forEach((log) => {
+            const last = result[result.length - 1];
 
-    const getMethodColor = (method) => {
-        switch (method) {
-            case 'GET': return 'bg-blue-100 text-blue-800';
-            case 'POST': return 'bg-green-100 text-green-800';
-            case 'PUT': return 'bg-yellow-100 text-yellow-800';
-            case 'DELETE': return 'bg-red-100 text-red-800';
-            default: return 'bg-gray-100 text-gray-800';
-        }
-    };
+            const isSameAction = last &&
+                last.user_id === log.user_id &&
+                last.path === log.path &&
+                last.method === log.method &&
+                last.status_code === log.status_code;
 
-    const formatTimestamp = (timestamp) => {
-        if (!timestamp) return 'N/A';
-        const date = new Date(timestamp);
-        return date.toLocaleString('en-IN', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
+            const timeDiff = last ? Math.abs(new Date(last.timestamp) - new Date(log.timestamp)) : Infinity;
+
+            if (isSameAction && timeDiff < 5000) {
+                last.groupCount = (last.groupCount || 1) + 1;
+                // Keep the most recent timestamp for the group
+                last.timestamp = log.timestamp;
+            } else {
+                result.push({ ...log, groupCount: 1 });
+            }
         });
+        return result;
+    }, [logs]);
+
+    const getActionTag = (path) => {
+        if (path.includes('/inventory') || path.includes('/stock')) return { label: 'Inventory', color: 'bg-amber-100 text-amber-800' };
+        if (path.includes('/payment') || path.includes('/gst') || path.includes('/expenses') || path.includes('/billing') || path.includes('/account')) return { label: 'Finance', color: 'bg-emerald-100 text-emerald-800' };
+        if (path.includes('/booking') || path.includes('/packages') || path.includes('/room')) return { label: 'Bookings', color: 'bg-indigo-100 text-indigo-800' };
+        if (path.includes('/food') || path.includes('/order') || path.includes('/recipe')) return { label: 'Dining', color: 'bg-rose-100 text-rose-800' };
+        if (path.includes('/service') || path.includes('/attendance') || path.includes('/employee')) return { label: 'Operations', color: 'bg-purple-100 text-purple-800' };
+        return { label: 'System', color: 'bg-gray-100 text-gray-800' };
     };
 
-    const LogRow = ({ log, isLast, refProp }) => (
-        <tr ref={refProp} className="hover:bg-gray-50 border-b border-gray-100">
-            <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{formatTimestamp(log.timestamp)}</td>
-            <td className="px-4 py-3 whitespace-nowrap">
-                <span className={`px-2 py-1 text-xs font-semibold rounded ${getMethodColor(log.method)}`}>
-                    {log.method}
-                </span>
-            </td>
-            <td className="px-4 py-3 text-sm text-gray-900 font-mono break-all max-w-xs">{log.path}</td>
-            <td className="px-4 py-3 whitespace-nowrap">
-                <span className={`text-sm font-semibold ${getStatusColor(log.status_code)}`}>
-                    {log.status_code}
-                </span>
-            </td>
-            <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{log.client_ip}</td>
-            <td className="px-4 py-3 text-sm text-gray-900">
-                {log.user_name ? (
-                    <div>
-                        <div className="font-medium text-xs sm:text-sm">{log.user_name}</div>
-                        <div className="text-xs text-gray-500 hidden sm:block">{log.user_email}</div>
+    const humanizeLog = (log) => {
+        const { method, path, status_code, user_name } = log;
+        const user = user_name || 'A guest';
+
+        if (status_code === 401) return `tried to access a restricted area (${path.split('/').pop() || 'endpoint'}) but was blocked.`;
+        if (status_code === 403) return `was denied permission to perform an action on ${path}.`;
+        if (status_code >= 500) return `encountered a system error while accessing ${path}.`;
+
+        const isView = method === 'GET';
+        const isCreate = method === 'POST';
+        const isUpdate = method === 'PUT' || method === 'PATCH';
+        const isDelete = method === 'DELETE';
+
+        let entity = 'the system';
+        if (path.includes('bookings')) entity = 'bookings';
+        else if (path.includes('inventory')) entity = 'inventory items';
+        else if (path.includes('stock')) entity = 'stock levels';
+        else if (path.includes('food')) entity = 'food orders';
+        else if (path.includes('expenses')) entity = 'expenses';
+        else if (path.includes('gst')) entity = 'GST reports';
+        else if (path.includes('rooms')) entity = 'room data';
+        else if (path.includes('service')) entity = 'service requests';
+        else if (path.includes('attendance')) entity = 'attendance records';
+        else if (path.includes('auth/login')) return `logged into the system.`;
+        else if (path.includes('auth/logout')) return `logged out.`;
+
+        if (isView) return `viewed ${entity}.`;
+        if (isCreate) return `created a new entry in ${entity}.`;
+        if (isUpdate) return `updated ${entity}.`;
+        if (isDelete) return `deleted an entry from ${entity}.`;
+
+        return `performed ${method} on ${path}.`;
+    };
+
+    const StatusIndicator = ({ code }) => {
+        if (code >= 200 && code < 300) return (
+            <div className="flex items-center gap-1.5 text-green-600">
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                <span className="font-semibold text-xs">Success</span>
+            </div>
+        );
+        if (code === 401 || code === 403) return (
+            <div className="flex items-center gap-1.5 text-amber-600">
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.366zM7.523 5.11a6 6 0 018.366 8.367L7.523 5.11zM10 18a8 8 0 100-16 8 8 0 000 16z" clipRule="evenodd" /></svg>
+                <span className="font-semibold text-xs">Blocked</span>
+            </div>
+        );
+        return (
+            <div className="flex items-center gap-1.5 text-red-600">
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
+                <span className="font-semibold text-xs">Error</span>
+            </div>
+        );
+    };
+
+    const LogRow = ({ log, isLast, refProp }) => {
+        const tag = getActionTag(log.path);
+        return (
+            <tr ref={refProp} className="hover:bg-gray-50 border-b border-gray-100 transition-colors">
+                <td className="px-4 py-4 text-xs text-gray-400 whitespace-nowrap">
+                    {formatDateTimeLong(log.timestamp).split(',')[1] || formatDateTimeLong(log.timestamp)}
+                </td>
+                <td className="px-4 py-4 whitespace-nowrap">
+                    <span className={`px-2 py-1 text-[10px] uppercase font-bold rounded-md ${tag.color}`}>
+                        {tag.label}
+                    </span>
+                </td>
+                <td className="px-4 py-4">
+                    <div className="flex flex-col gap-0.5">
+                        <div className="text-sm text-gray-800 flex items-center gap-2">
+                            <span className="font-bold text-gray-900">{log.user_name || 'Guest'}</span>
+                            <span>{humanizeLog(log)}</span>
+                            {log.groupCount > 1 && (
+                                <span className="bg-indigo-100 text-indigo-600 text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                                    ×{log.groupCount}
+                                </span>
+                            )}
+                        </div>
+                        <div className="text-[10px] text-gray-400 font-mono flex items-center gap-2">
+                            <span className="bg-gray-100 px-1 rounded">{log.method}</span>
+                            <span>{log.path}</span>
+                        </div>
                     </div>
-                ) : (
-                    <span className="text-gray-400 text-xs italic">Guest</span>
-                )}
-            </td>
-            <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate" title={log.details}>
-                {log.details || "-"}
-            </td>
-        </tr>
-    );
+                </td>
+                <td className="px-4 py-4 whitespace-nowrap">
+                    <StatusIndicator code={log.status_code} />
+                </td>
+                <td className="px-4 py-4 text-xs text-gray-500 whitespace-nowrap hidden md:table-cell">
+                    {log.client_ip}
+                </td>
+                <td className="px-4 py-4 text-[10px] text-gray-400 max-w-[120px] truncate italic hidden lg:table-cell">
+                    {log.details || "-"}
+                </td>
+            </tr>
+        );
+    };
 
     return (
         <DashboardLayout>
@@ -213,7 +293,7 @@ const ActivityLogs = () => {
 
                 {/* Filters */}
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         <div>
                             <label className="block text-xs font-semibold text-gray-600 mb-1.5">Method</label>
                             <select
@@ -223,25 +303,60 @@ const ActivityLogs = () => {
                                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                             >
                                 <option value="">All Methods</option>
-                                <option value="GET">GET</option>
-                                <option value="POST">POST</option>
-                                <option value="PUT">PUT</option>
-                                <option value="DELETE">DELETE</option>
+                                <option value="GET">GET (View)</option>
+                                <option value="POST">POST (Create)</option>
+                                <option value="PUT">PUT (Update)</option>
+                                <option value="PATCH">PATCH (Modify)</option>
+                                <option value="DELETE">DELETE (Remove)</option>
                             </select>
                         </div>
+
                         <div>
-                            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Path</label>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Module/Category</label>
+                            <select
+                                name="module"
+                                value={filters.module}
+                                onChange={handleFilterChange}
+                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                            >
+                                <option value="">All Modules</option>
+                                <option value="inventory">Inventory</option>
+                                <option value="booking">Bookings</option>
+                                <option value="food">Dining</option>
+                                <option value="service">Services</option>
+                                <option value="payment">Finance</option>
+                                <option value="employee">HR/Staff</option>
+                                <option value="room">Rooms</option>
+                                <option value="auth">Authentication</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1.5">User</label>
+                            <input
+                                type="text"
+                                name="user_name"
+                                value={filters.user_name}
+                                onChange={handleFilterChange}
+                                placeholder="Search by user name..."
+                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Path Contains</label>
                             <input
                                 type="text"
                                 name="path"
                                 value={filters.path}
                                 onChange={handleFilterChange}
-                                placeholder="Search path..."
+                                placeholder="e.g., /api/bookings"
                                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                             />
                         </div>
+
                         <div>
-                            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Status</label>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Status Code</label>
                             <select
                                 name="status_code"
                                 value={filters.status_code}
@@ -249,14 +364,28 @@ const ActivityLogs = () => {
                                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                             >
                                 <option value="">All Status</option>
-                                <option value="200">200 - OK</option>
-                                <option value="400">400 - Bad Request</option>
-                                <option value="422">422 - Validation Error</option>
-                                <option value="500">500 - Server Error</option>
+                                <optgroup label="Success (2xx)">
+                                    <option value="200">200 - OK</option>
+                                    <option value="201">201 - Created</option>
+                                    <option value="204">204 - No Content</option>
+                                </optgroup>
+                                <optgroup label="Client Errors (4xx)">
+                                    <option value="400">400 - Bad Request</option>
+                                    <option value="401">401 - Unauthorized</option>
+                                    <option value="403">403 - Forbidden</option>
+                                    <option value="404">404 - Not Found</option>
+                                    <option value="422">422 - Validation Error</option>
+                                </optgroup>
+                                <optgroup label="Server Errors (5xx)">
+                                    <option value="500">500 - Internal Error</option>
+                                    <option value="502">502 - Bad Gateway</option>
+                                    <option value="503">503 - Service Unavailable</option>
+                                </optgroup>
                             </select>
                         </div>
+
                         <div>
-                            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Period</label>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Time Period</label>
                             <select
                                 name="hours"
                                 value={filters.hours}
@@ -265,9 +394,61 @@ const ActivityLogs = () => {
                             >
                                 <option value="1">Last 1 hour</option>
                                 <option value="6">Last 6 hours</option>
+                                <option value="12">Last 12 hours</option>
                                 <option value="24">Last 24 hours</option>
+                                <option value="48">Last 2 days</option>
                                 <option value="168">Last 7 days</option>
+                                <option value="720">Last 30 days</option>
+                                <option value="custom">Custom Range</option>
                             </select>
+                        </div>
+
+                        {filters.hours === 'custom' && (
+                            <>
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-600 mb-1.5">Start Date</label>
+                                    <input
+                                        type="datetime-local"
+                                        name="start_date"
+                                        value={filters.start_date}
+                                        onChange={handleFilterChange}
+                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-600 mb-1.5">End Date</label>
+                                    <input
+                                        type="datetime-local"
+                                        name="end_date"
+                                        value={filters.end_date}
+                                        onChange={handleFilterChange}
+                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                                    />
+                                </div>
+                            </>
+                        )}
+
+                        <div className="flex items-end">
+                            <button
+                                onClick={() => {
+                                    setFilters({
+                                        method: '',
+                                        path: '',
+                                        status_code: '',
+                                        user_name: '',
+                                        module: '',
+                                        start_date: '',
+                                        end_date: '',
+                                        hours: '24'
+                                    });
+                                }}
+                                className="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium flex items-center justify-center gap-2"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                                Clear Filters
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -278,22 +459,21 @@ const ActivityLogs = () => {
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50 border-b border-gray-200">
                                 <tr>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Time</th>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Method</th>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Path</th>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Client IP</th>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">User</th>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Details</th>
+                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider w-24">Time</th>
+                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider w-32">Module</th>
+                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Activity</th>
+                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider w-28">Status</th>
+                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider w-32 hidden md:table-cell">Client IP</th>
+                                    <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider w-40 hidden lg:table-cell">Internal Details</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {logs.map((log, index) => (
+                                {groupedLogs.map((log, index) => (
                                     <LogRow
-                                        key={log.id}
+                                        key={`${log.id}-${index}`}
                                         log={log}
-                                        isLast={logs.length === index + 1}
-                                        refProp={logs.length === index + 1 ? lastLogElementRef : null}
+                                        isLast={groupedLogs.length === index + 1}
+                                        refProp={groupedLogs.length === index + 1 ? lastLogElementRef : null}
                                     />
                                 ))}
                             </tbody>

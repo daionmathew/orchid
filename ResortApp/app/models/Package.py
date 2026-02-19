@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
+from datetime import datetime
 from app.database import Base
 
 
@@ -58,6 +59,7 @@ class PackageBooking(Base):
     status = Column(String)
     total_amount = Column(Float, default=0.0) # Added for tracking package booking value
     advance_deposit = Column(Float, default=0.0)  # Advance payment made during booking
+    created_at = Column(DateTime, default=datetime.utcnow) # Added for sorting
     food_preferences = Column(String, nullable=True)
     special_requests = Column(String, nullable=True)
 

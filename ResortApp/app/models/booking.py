@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Float, Integer, String, ForeignKey, Date, DateTime, Boolean
 from sqlalchemy.orm import relationship
+from datetime import datetime
 from app.database import Base
 from .room import Room
 from .user import User
@@ -8,6 +9,7 @@ class Booking(Base):
     __tablename__ = "bookings"
 
     id = Column(Integer, primary_key=True, index=True)
+    display_id = Column(String, index=True, nullable=True) # BK-000001
     status = Column(String, default="booked")
     guest_name = Column(String, nullable=False)
     guest_mobile = Column(String, nullable=True)
@@ -22,6 +24,7 @@ class Booking(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     total_amount = Column(Float, default=0.0)
     advance_deposit = Column(Float, default=0.0)  # Advance payment made during booking
+    created_at = Column(DateTime, default=datetime.utcnow) # Added
     
     # New Fields
     source = Column(String, default="Direct")  # Direct, OTA, Walk-in

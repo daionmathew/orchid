@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from typing import Optional
+from typing import Optional, List
+import json
 from app.utils.auth import get_current_user
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -35,7 +36,6 @@ def create_room_test(
     status: str = Form("Available"),
     adults: int = Form(2),
     children: int = Form(0),
-    image: Optional[UploadFile] = File(None),
     air_conditioning: bool = Form(False),
     wifi: bool = Form(False),
     bathroom: bool = Form(False),
@@ -48,6 +48,7 @@ def create_room_test(
     garden: bool = Form(False),
     dining: bool = Form(False),
     breakfast: bool = Form(False),
+    images: List[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -57,17 +58,22 @@ def create_room_test(
         if existing_room:
             raise HTTPException(status_code=400, detail=f"Room {number} already exists")
 
-        filename = None
-        if image and image.filename:
-            try:
-                ext = image.filename.split('.')[-1]
-                filename = f"room_{uuid4().hex}.{ext}"
-                image_path = os.path.join(UPLOAD_DIR, filename)
-                with open(image_path, "wb") as buffer:
-                    shutil.copyfileobj(image.file, buffer)
-            except Exception as e:
-                print(f"Error saving image: {e}")
-                raise HTTPException(status_code=500, detail=f"Error saving image: {str(e)}")
+        image_urls = []
+        if images:
+            for img in images:
+                if img.filename:
+                    try:
+                        ext = img.filename.split('.')[-1]
+                        filename = f"room_{uuid4().hex}.{ext}"
+                        image_path = os.path.join(UPLOAD_DIR, filename)
+                        with open(image_path, "wb") as buffer:
+                            shutil.copyfileobj(img.file, buffer)
+                        image_urls.append(f"/uploads/rooms/{filename}")
+                    except Exception as e:
+                        print(f"Error saving image: {e}")
+        
+        main_image = image_urls[0] if image_urls else None
+        extra_images = json.dumps(image_urls[1:]) if len(image_urls) > 1 else None
 
         # Convert string booleans to actual booleans (frontend sends "true"/"false" as strings)
         def str_to_bool(val):
@@ -98,7 +104,8 @@ def create_room_test(
             status=status,
             adults=adults,
             children=children,
-            image_url=f"/uploads/rooms/{filename}" if filename else None,
+            image_url=main_image,
+            extra_images=extra_images,
             air_conditioning=air_conditioning,
             wifi=wifi,
             bathroom=bathroom,
@@ -217,7 +224,6 @@ def get_rooms_test(db: Session = Depends(get_db), skip: int = 0, limit: int = 10
         
         raise HTTPException(status_code=500, detail=f"Error fetching rooms: {str(e)}")
 
-# ---------------- CREATE ----------------
 @router.post("", response_model=RoomOut)
 def create_room(
     number: str = Form(...),
@@ -226,7 +232,6 @@ def create_room(
     status: str = Form("Available"),
     adults: int = Form(2),
     children: int = Form(0),
-    image: Optional[UploadFile] = File(None),
     air_conditioning: bool = Form(False),
     wifi: bool = Form(False),
     bathroom: bool = Form(False),
@@ -239,21 +244,27 @@ def create_room(
     garden: bool = Form(False),
     dining: bool = Form(False),
     breakfast: bool = Form(False),
+    images: List[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     try:
-        filename = None
-        if image and image.filename:
-            try:
-                ext = image.filename.split('.')[-1]
-                filename = f"room_{uuid4().hex}.{ext}"
-                image_path = os.path.join(UPLOAD_DIR, filename)
-                with open(image_path, "wb") as buffer:
-                    shutil.copyfileobj(image.file, buffer)
-            except Exception as e:
-                print(f"Error saving image: {e}")
-                raise HTTPException(status_code=500, detail=f"Error saving image: {str(e)}")
+        image_urls = []
+        if images:
+            for img in images:
+                if img.filename:
+                    try:
+                        ext = img.filename.split('.')[-1]
+                        filename = f"room_{uuid4().hex}.{ext}"
+                        image_path = os.path.join(UPLOAD_DIR, filename)
+                        with open(image_path, "wb") as buffer:
+                            shutil.copyfileobj(img.file, buffer)
+                        image_urls.append(f"/uploads/rooms/{filename}")
+                    except Exception as e:
+                        print(f"Error saving image: {e}")
+        
+        main_image = image_urls[0] if image_urls else None
+        extra_images = json.dumps(image_urls[1:]) if len(image_urls) > 1 else None
 
         # Convert string booleans to actual booleans (frontend sends "true"/"false" as strings)
         def str_to_bool(val):
@@ -284,7 +295,8 @@ def create_room(
             status=status,
             adults=adults,
             children=children,
-            image_url=f"/uploads/rooms/{filename}" if filename else None,
+            image_url=main_image,
+            extra_images=extra_images,
             air_conditioning=air_conditioning,
             wifi=wifi,
             bathroom=bathroom,
@@ -404,15 +416,28 @@ def _get_rooms_impl(db: Session, skip: int = 0, limit: int = 20):
         # Return the rooms directly - SQLAlchemy should handle serialization
         # Hydrate current guest name
         from app.models.booking import Booking, BookingRoom
+        from app.models.Package import PackageBooking, PackageBookingRoom
+        
         for room in rooms:
+            # Check regular bookings first
             active_booking = db.query(Booking).join(BookingRoom).filter(
                 BookingRoom.room_id == room.id,
-                Booking.status.in_(['checked-in', 'checked_in', 'Checked-in', 'booked', 'Booked'])
-            ).first()
+                Booking.status.in_(['checked-in', 'checked_in', 'Checked-in', 'booked', 'Booked', 'occupied', 'Occupied'])
+            ).order_by(Booking.id.desc()).first()
+            
             if active_booking:
                 room.current_guest_name = getattr(active_booking, 'guest_name', 'Guest')
             else:
-                room.current_guest_name = None
+                # Check package bookings if no regular booking found
+                active_pkg_booking = db.query(PackageBooking).join(PackageBookingRoom).filter(
+                    PackageBookingRoom.room_id == room.id,
+                    PackageBooking.status.in_(['checked-in', 'checked_in', 'Checked-in', 'booked', 'Booked', 'occupied', 'Occupied'])
+                ).order_by(PackageBooking.id.desc()).first()
+                
+                if active_pkg_booking:
+                    room.current_guest_name = getattr(active_pkg_booking, 'guest_name', 'Guest')
+                else:
+                    room.current_guest_name = None
         
         return rooms
         
@@ -485,7 +510,6 @@ def update_room(
     housekeeping_status: str = Form(None),
     adults: int = Form(None),
     children: int = Form(None),
-    image: Optional[UploadFile] = File(None),
     air_conditioning: bool = Form(None),
     wifi: bool = Form(None),
     bathroom: bool = Form(None),
@@ -498,6 +522,7 @@ def update_room(
     garden: bool = Form(None),
     dining: bool = Form(None),
     breakfast: bool = Form(None),
+    images: List[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -518,7 +543,6 @@ def update_room(
         db_room.status = status
     if housekeeping_status:
         db_room.housekeeping_status = housekeeping_status
-        db_room.housekeeping_updated_at = datetime.utcnow()
     if adults is not None:
         db_room.adults = adults
     if children is not None:
@@ -550,20 +574,42 @@ def update_room(
     if breakfast is not None:
         db_room.breakfast = breakfast
 
-    # Handle new image upload if provided
-    if image:
+    # Handle new image uploads if provided
+    if images:
         # Remove old image if exists
         if db_room.image_url:
             old_path = db_room.image_url.lstrip("/")
             if os.path.exists(old_path):
-                os.remove(old_path)
+                try:
+                    os.remove(old_path)
+                except: pass
+        
+        # Remove old extra images if they exist
+        if db_room.extra_images:
+            try:
+                old_extras = json.loads(db_room.extra_images)
+                for old_p in old_extras:
+                    old_path = old_p.lstrip("/")
+                    if os.path.exists(old_path):
+                        try:
+                            os.remove(old_path)
+                        except: pass
+            except:
+                pass
 
-        ext = image.filename.split(".")[-1]
-        filename = f"room_{uuid4().hex}.{ext}"
-        image_path = os.path.join(UPLOAD_DIR, filename)
-        with open(image_path, "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
-        db_room.image_url = f"/uploads/rooms/{filename}"
+        image_urls = []
+        for img in images:
+            if img.filename:
+                ext = img.filename.split(".")[-1]
+                filename = f"room_{uuid4().hex}.{ext}"
+                image_path = os.path.join(UPLOAD_DIR, filename)
+                with open(image_path, "wb") as buffer:
+                    shutil.copyfileobj(img.file, buffer)
+                image_urls.append(f"/uploads/rooms/{filename}")
+        
+        if image_urls:
+            db_room.image_url = image_urls[0]
+            db_room.extra_images = json.dumps(image_urls[1:]) if len(image_urls) > 1 else None
 
     db.commit()
     db.refresh(db_room)

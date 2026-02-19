@@ -8,6 +8,7 @@ class Booking {
   final String amount;
   final String roomNumber;
   final bool isPackage; 
+  final DateTime? createdAt; // Added
 
   final String roomType;
   final int adults;
@@ -25,6 +26,7 @@ class Booking {
     required this.amount,
     required this.roomNumber,
     required this.isPackage,
+    this.createdAt,
     this.roomType = 'Standard',
     this.adults = 2,
     this.children = 0,
@@ -37,13 +39,24 @@ class Booking {
     double calculatedAmount = 0.0;
     
     if (json['total_amount'] != null && json['total_amount'] > 0) {
-      calculatedAmount = (json['total_amount'] as num).toDouble();
-    } else if (json['rooms'] != null && (json['rooms'] as List).isNotEmpty) {
+      if (json['total_amount'] is String) {
+        calculatedAmount = double.tryParse(json['total_amount']) ?? 0.0;
+      } else {
+        calculatedAmount = (json['total_amount'] as num).toDouble();
+      }
+    } else if (json['rooms'] != null && (json['rooms'] is List) && (json['rooms'] as List).isNotEmpty) {
       // Fallback: Calculate from room prices and stay duration
       try {
         final rooms = json['rooms'] as List;
-        final checkIn = DateTime.tryParse(json['check_in'] ?? '');
-        final checkOut = DateTime.tryParse(json['check_out'] ?? '');
+        DateTime? checkIn;
+        DateTime? checkOut;
+        
+        try {
+          checkIn = DateTime.tryParse(json['check_in'] ?? '');
+          checkOut = DateTime.tryParse(json['check_out'] ?? '');
+        } catch (e) {
+             print("Date parsing error: $e");
+        }
         
         if (checkIn != null && checkOut != null) {
           final nights = checkOut.difference(checkIn).inDays;
@@ -58,27 +71,41 @@ class Booking {
     }
 
     String rType = 'Standard';
-    if (json['rooms'] != null && (json['rooms'] as List).isNotEmpty) {
-      rType = json['rooms'][0]['type'] ?? 'Standard';
+    if (json['rooms'] != null && (json['rooms'] is List) && (json['rooms'] as List).isNotEmpty) {
+        // Safe access
+        if (json['rooms'][0] is Map) {
+             rType = json['rooms'][0]['type'] ?? 'Standard';
+        }
     }
     
+    // Extract Package Name
+    String pkgName = json['package_name'] ?? '';
+    if (json['package'] != null) {
+      if (json['package'] is Map) {
+         pkgName = json['package']['title'] ?? json['package']['name'] ?? pkgName;
+      } else if (json['package'] is String) {
+         pkgName = json['package'];
+      }
+    }
+
     return Booking(
       id: json['id'] ?? 0,
       bookingReference: json['display_id'] ?? 'Ref: ${json['id']}',
       guestName: json['guest_name'] ?? 'Unknown',
-      checkInDate: json['check_in'] ?? '',
-      checkOutDate: json['check_out'] ?? '',
+      checkInDate: json['check_in'] != null ? json['check_in'].toString() : '',
+      checkOutDate: json['check_out'] != null ? json['check_out'].toString() : '',
       status: json['status'] ?? 'Pending',
       amount: calculatedAmount > 0 ? calculatedAmount.toStringAsFixed(2) : '0',
-      roomNumber: (json['rooms'] != null && (json['rooms'] as List).isNotEmpty) 
+      roomNumber: (json['rooms'] != null && (json['rooms'] is List) && (json['rooms'] as List).isNotEmpty && json['rooms'][0] is Map && json['rooms'][0]['number'] != null) 
           ? json['rooms'][0]['number'].toString() 
           : '-',
-      isPackage: json['is_package'] ?? false,
+      isPackage: json['is_package'] ?? (json['package_id'] != null) ?? false,
+      createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at']) : null,
       roomType: rType,
       adults: json['adults'] ?? 2,
       children: json['children'] ?? 0,
       source: json['source'] ?? 'Direct',
-      packageName: json['package_name'] ?? '',
+      packageName: pkgName,
     );
   }
 }

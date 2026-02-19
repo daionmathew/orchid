@@ -16,6 +16,7 @@ class Room(Base):
     
     # Relationships # Clean, Dirty, Inspecting, Repair
     image_url = Column(String, nullable=True)
+    extra_images = Column(String, nullable=True) # JSON string of extra image URLs
     adults = Column(Integer, default=2)      # max adults allowed
     children = Column(Integer, default=0)    # max children allowed
     inventory_location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)  # Link to inventory locations

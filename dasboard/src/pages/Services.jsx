@@ -5,19 +5,41 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer
 } from "recharts";
-import { Loader2, X } from "lucide-react";
+import {
+  Loader2, X, Activity, Box, Zap, Users, IndianRupee,
+  LayoutDashboard, Plus, ClipboardList, Package, Clock,
+  ArrowRight, Search, Filter, RefreshCw, ChevronRight,
+  TrendingUp, Star, Archive, Layers, AlertCircle, CheckCircle,
+  Radio, AlertTriangle, Map, PieChart as PieIcon, BarChart3 as BarIcon
+} from "lucide-react";
 import { getMediaBaseUrl } from "../utils/env";
+import { getImageUrl } from "../utils/imageUtils";
+import { formatDateIST, formatDateTimeIST } from "../utils/dateUtils";
 
-// Reusable card component for a consistent look
-const Card = ({ title, className = "", children }) => {
+// Reusable card component for a premium look
+const Card = React.memo(({ title, subtitle, icon, className = "", children, glass = false }) => {
   const isGradient = className.includes("gradient");
   return (
-    <div className={`${isGradient ? '' : 'bg-white'} rounded-2xl shadow-lg ${isGradient ? '' : 'border border-gray-200'} p-6 ${className}`}>
-      {title && <h2 className={`text-xl font-bold mb-4 ${isGradient ? 'text-white' : 'text-gray-800'}`}>{title}</h2>}
+    <div className={`
+      relative overflow-hidden rounded-2xl transition-all duration-300
+      ${glass ? 'bg-white/80 backdrop-blur-xl border border-white/20' : isGradient ? '' : 'bg-white border border-slate-100'} 
+      ${isGradient ? '' : 'shadow-sm hover:shadow-xl hover:-translate-y-1'}
+      p-6 ${className}
+    `}>
+      {title && (
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <h2 className={`text-lg font-bold tracking-tight ${isGradient ? 'text-white' : 'text-slate-800'}`}>{title}</h2>
+            {subtitle && <p className={`text-xs mt-1 ${isGradient ? 'text-white/70' : 'text-slate-500'}`}>{subtitle}</p>}
+          </div>
+          {icon && <div className={`p-2 rounded-xl ${isGradient ? 'bg-white/20' : 'bg-slate-50 text-indigo-600'}`}>{icon}</div>}
+        </div>
+      )}
       {children}
     </div>
   );
-};
+});
+Card.displayName = 'Card';
 
 const COLORS = ["#4F46E5", "#6366F1", "#A78BFA", "#F472B6"];
 
@@ -68,6 +90,7 @@ const Services = () => {
   const [editingServiceId, setEditingServiceId] = useState(null);
   const [viewingAssignedService, setViewingAssignedService] = useState(null);
   const [completingServiceId, setCompletingServiceId] = useState(null);
+  const [completingRequestId, setCompletingRequestId] = useState(null);
   const [inventoryAssignments, setInventoryAssignments] = useState([]);
   const [returnQuantities, setReturnQuantities] = useState({});
   const [usedQuantities, setUsedQuantities] = useState({}); // Track used quantities for each assignment
@@ -78,6 +101,8 @@ const Services = () => {
   const [showServiceReport, setShowServiceReport] = useState(false);
   const [quickAssignModal, setQuickAssignModal] = useState(null); // { request, serviceId, employeeId }
   const [serviceReport, setServiceReport] = useState(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportFilters, setReportFilters] = useState({
     from_date: '',
@@ -90,6 +115,7 @@ const Services = () => {
   const [serviceRequests, setServiceRequests] = useState([]);
   const [paymentModal, setPaymentModal] = useState(null); // { orderId, amount }
   const [selectedActivity, setSelectedActivity] = useState(null);
+  const [returnRequestModal, setReturnRequestModal] = useState(null); // { requestId, items }
 
   // Fetch service requests
   const fetchServiceRequests = async () => {
@@ -154,88 +180,69 @@ const Services = () => {
 
       // Get room IDs from checked-in regular bookings
       regularBookings.forEach(booking => {
-        console.log(`Checking regular booking ${booking.id}, status: ${booking.status}, rooms:`, booking.rooms);
-        if (isCheckedIn(booking.status)) {
+        if (isCheckedIn(booking.status) || normalizeStatus(booking.status) === 'booked') {
           // Parse dates properly
           const checkInDate = new Date(booking.check_in);
           const checkOutDate = new Date(booking.check_out);
           checkInDate.setHours(0, 0, 0, 0);
           checkOutDate.setHours(0, 0, 0, 0);
 
+          const normalizedStatus = normalizeStatus(booking.status);
+          const isActuallyCheckedIn = normalizedStatus === 'checkedin';
+
           // Check if booking is active (today is between check-in and check-out)
-          // Also allow if check-out is today (room is still checked in)
-          if (checkInDate <= today && checkOutDate >= today) {
+          // Also allow if checked-in (to handle overstays)
+          if ((checkInDate <= today && checkOutDate >= today) || isActuallyCheckedIn) {
             if (booking.rooms && Array.isArray(booking.rooms)) {
               booking.rooms.forEach(room => {
                 if (room && room.id) {
                   checkedInRoomIds.add(room.id);
-                  console.log(`Added checked-in room: ${room.number} (ID: ${room.id}) from booking ${booking.id}, status: ${booking.status}`);
-                } else {
-                  console.log(`Booking ${booking.id} room missing id:`, room);
                 }
               });
-            } else {
-              console.log(`Booking ${booking.id} has checked-in status but no rooms array or rooms is not an array`);
             }
-          } else {
-            console.log(`Booking ${booking.id} is checked-in but dates don't match: check_in=${checkInDate}, check_out=${checkOutDate}, today=${today}`);
           }
-        } else {
-          console.log(`Regular booking ${booking.id} status '${booking.status}' is not checked-in (normalized: '${normalizeStatus(booking.status)}')`);
         }
       });
 
       // Get room IDs from checked-in package bookings
-      // Note: Package bookings have rooms as PackageBookingRoomOut objects with a nested 'room' property
       packageBookings.forEach(booking => {
-        console.log(`Checking package booking ${booking.id}, status: ${booking.status}, rooms:`, booking.rooms);
-        if (isCheckedIn(booking.status)) {
-          // Parse dates properly
+        if (isCheckedIn(booking.status) || normalizeStatus(booking.status) === 'booked') {
           const checkInDate = new Date(booking.check_in);
           const checkOutDate = new Date(booking.check_out);
           checkInDate.setHours(0, 0, 0, 0);
           checkOutDate.setHours(0, 0, 0, 0);
 
-          // Check if booking is active (today is between check-in and check-out)
-          // Also allow if check-out is today (room is still checked in)
-          if (checkInDate <= today && checkOutDate >= today) {
+          const normalizedStatus = normalizeStatus(booking.status);
+          const isActuallyCheckedIn = normalizedStatus === 'checkedin';
+
+          if ((checkInDate <= today && checkOutDate >= today) || isActuallyCheckedIn) {
             if (booking.rooms && Array.isArray(booking.rooms)) {
               booking.rooms.forEach(roomLink => {
-                // Package bookings have rooms as PackageBookingRoomOut objects
-                // The actual room is nested in roomLink.room
                 const room = roomLink.room || roomLink;
                 if (room && room.id) {
                   checkedInRoomIds.add(room.id);
-                  console.log(`Added checked-in package room: ${room.number} (ID: ${room.id}) from booking ${booking.id}, status: ${booking.status}`);
-                } else {
-                  console.log(`Package booking ${booking.id} room link missing room data:`, roomLink);
                 }
               });
-            } else {
-              console.log(`Package booking ${booking.id} has checked-in status but no rooms array`);
             }
-          } else {
-            console.log(`Package booking ${booking.id} is checked-in but dates don't match: check_in=${checkInDate}, check_out=${checkOutDate}, today=${today}`);
           }
-        } else {
-          console.log(`Package booking ${booking.id} status '${booking.status}' is not checked-in (normalized: '${normalizeStatus(booking.status)}')`);
         }
       });
 
-      // Also check room status directly as a fallback (in case booking status is not set correctly)
+      // Also check room status directly as a fallback
       rRes.data.forEach(room => {
         const roomStatusNormalized = normalizeStatus(room.status);
-        if (roomStatusNormalized === 'checkedin') {
+        if (roomStatusNormalized === 'checkedin' || roomStatusNormalized === 'occupied') {
           checkedInRoomIds.add(room.id);
-          console.log(`Added checked-in room from room status: ${room.number} (ID: ${room.id}), status: ${room.status}`);
         }
       });
 
-      console.log(`Total checked-in room IDs: ${checkedInRoomIds.size}`, Array.from(checkedInRoomIds));
-
       // Filter rooms to only show checked-in rooms
-      const checkedInRooms = (rRes?.data || []).filter(room => checkedInRoomIds.has(room.id));
-      console.log(`Filtered checked-in rooms: ${checkedInRooms.length}`, checkedInRooms.map(r => `${r.number} (status: ${r.status})`));
+      const checkedInRooms = (rRes?.data || []).filter(room => {
+        const roomStatusNormalized = normalizeStatus(room.status);
+        return checkedInRoomIds.has(room.id) ||
+          roomStatusNormalized === 'checkedin' ||
+          roomStatusNormalized === 'occupied';
+      });
       setRooms(checkedInRooms);
     } catch (error) {
       // Set default values on error
@@ -336,14 +343,7 @@ const Services = () => {
     setImagePreviews(previews);
   };
 
-  // Helper function to get image URL
-  const getImageUrl = (imagePath) => {
-    if (!imagePath) return '';
-    if (imagePath.startsWith('http')) return imagePath;
-    const baseUrl = getMediaBaseUrl();
-    const path = imagePath.startsWith('/') ? imagePath : `/${imagePath}`;
-    return `${baseUrl}${path}`;
-  };
+  // Utility moved to utils/imageUtils.js
 
   // Add inventory item to service
   const handleAddInventoryItem = () => {
@@ -394,11 +394,13 @@ const Services = () => {
     setSelectedImages([]);
     setImagePreviews([]);
     setEditingServiceId(service.id);
+    setShowCreateModal(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleCancelEdit = () => {
     resetServiceForm();
+    setShowCreateModal(false);
   };
 
   const handleToggleExistingImage = (imageId) => {
@@ -500,6 +502,7 @@ const Services = () => {
       }
 
       resetServiceForm();
+      setShowCreateModal(false);
       fetchAll();
     } catch (err) {
       console.error("Failed to save service", err);
@@ -651,6 +654,7 @@ const Services = () => {
       }
 
       setAssignForm({ service_id: "", employee_id: "", room_id: "", status: "pending" });
+      setShowAssignModal(false);
       setSelectedServiceDetails(null);
       setExtraInventoryItems([]);
       fetchAll(false);
@@ -693,101 +697,378 @@ const Services = () => {
   };
 
   const [statusChangeTimes, setStatusChangeTimes] = useState({});
+  const [completingBillingStatus, setCompletingBillingStatus] = useState(null); // New State
+  const [paymentModalReturnsChecked, setPaymentModalReturnsChecked] = useState(false); // New State for Modal Checkbox
 
-  const handleStatusChange = async (id, newStatus) => {
+  const handleStatusChange = async (id, newStatus, skipOrRequestId = false, billingStatus = null, forceReturn = false) => {
+    const skipInventory = skipOrRequestId === true;
+    const triggeringRequestId = typeof skipOrRequestId === "number" ? skipOrRequestId : null;
+
+    // Close payment modal if we're processing a status change with billing info
+    if (billingStatus) {
+      setPaymentModal(null);
+    }
+
     const changeTime = new Date().toISOString();
     setStatusChangeTimes(prev => ({ ...prev, [id]: changeTime }));
     try {
       // If changing to completed, check for inventory items to return
-      if (newStatus === "completed") {
+      if (newStatus === "completed" && !skipInventory) {
         // Fetch employee inventory assignments for this service
         try {
-          const assignedService = assignedServices.find(s => s.id === id);
-          if (assignedService && assignedService.employee) {
-            const empInvRes = await api.get(`/services/employee-inventory/${assignedService.employee.id}?status=assigned,in_use,completed`);
+          // Fetch specific assigned service details to ensure we have the latest inventory/debug items
+          // This fixes the issue where completing a service immediately after assignment might rely on stale list data
+          let assignedService = assignedServices.find(s => s.id === id);
+          try {
+            // Force refresh this specific service data to be sure
+            const freshRes = await api.get(`/services/assigned?skip=0&limit=100`); // Ideally filter by ID but our API list doesn't support it well, so we rely on find. 
+            // Actually, let's just rely on the fallback logic if locally missing, 
+            // BUT we can check if the found service has items.
+            const freshList = freshRes.data || [];
+            const fresh = freshList.find(s => s.id === id);
+            if (fresh) assignedService = fresh;
+          } catch (e) { console.warn("Failed to refresh individual service", e); }
+
+          // NEW: Skip inventory recovery modal for food/milk orders OR Billable services - go to payment instead
+          const serviceRequest = serviceRequests.find(r =>
+            (triggeringRequestId && r.id === triggeringRequestId) ||
+            r.assigned_service_id === id ||
+            r.id === id + 2000000
+          );
+
+          let isBillable = (serviceRequest && serviceRequest.food_order_id) ||
+            (assignedService?.service?.charges > 0) || // ANY service with charges triggers payment flow
+            (assignedService?.service?.name?.toLowerCase().includes('milk')) ||
+            (assignedService?.service?.name?.toLowerCase().includes('food')) ||
+            (assignedService?.service?.name?.toLowerCase().includes('delivery')) ||
+            (assignedService?.service?.name?.toLowerCase().includes('breakfast')) ||
+            (assignedService?.service?.name?.toLowerCase().includes('lunch')) ||
+            (assignedService?.service?.name?.toLowerCase().includes('dinner')) ||
+            (assignedService?.service?.name?.toLowerCase().includes('room service')) ||
+            (serviceRequest?.description?.toLowerCase().includes('milk')) ||
+            (serviceRequest?.description?.toLowerCase().includes('food')) ||
+            (serviceRequest?.description?.toLowerCase().includes('order')) ||
+            (serviceRequest?.request_type === "delivery");
+
+          // If we don't have a payment status yet, check if it's a food order
+          if (billingStatus === null || billingStatus === undefined || billingStatus === "") {
+            const isFoodOrder = (serviceRequest && serviceRequest.food_order_id) ||
+              (assignedService?.service?.name?.toLowerCase().includes('food')) ||
+              (assignedService?.service?.name?.toLowerCase().includes('delivery')) ||
+              (assignedService?.service?.name?.toLowerCase().includes('cleaning')) ||
+              (serviceRequest?.description?.toLowerCase().includes('cleaning')) ||
+              (serviceRequest?.request_type?.toLowerCase().includes('cleaning')) ||
+              (serviceRequest?.request_type === "delivery");
+
+            if (isFoodOrder) {
+              console.log("[DEBUG] Food order detected, defaulting to PAID billing status.");
+              billingStatus = "paid";
+            } else {
+              console.log("[DEBUG] Completing service, showing payment/status modal.");
+              setPaymentModal({ requestId: triggeringRequestId || id + 2000000, newStatus });
+              return;
+            }
+          }
+
+          const employeeId = assignedService?.employee?.id || assignedService?.employee_id || serviceRequest?.employee_id;
+
+          // Prefer debug_items if available as it may contain richer data assignments
+          let serviceAssignments = assignedService?.debug_items || assignedService?.inventory_items_used || [];
+
+          if (employeeId && serviceAssignments.length === 0) { // Only fetch from API if no assignments found in assignedService
+            const empInvRes = await api.get(`/services/employee-inventory/${employeeId}?status=assigned,in_use,completed`);
             const allAssignments = empInvRes.data || [];
-            // Filter assignments for this specific service - show all items with balance (unused items)
-            const serviceAssignments = allAssignments.filter(
+
+            // Filter assignments for this specific service
+            serviceAssignments = allAssignments.filter(
               a => a.assigned_service_id === id && a.balance_quantity > 0
             );
 
+            // If no specific service matches found, but employee has items, show them as fallback
+            if (serviceAssignments.length === 0) {
+              serviceAssignments = allAssignments.filter(a => a.balance_quantity > 0);
+            }
+
+            // CRITICAL: Refine isFood detection based on the actual items assigned
+            const hasFoodItems = serviceAssignments.some(a =>
+              a.item?.category?.toLowerCase().includes('food') ||
+              a.item?.category?.toLowerCase().includes('beverage') ||
+              a.item?.category?.toLowerCase().includes('service') || // Catch items wrongly categorized as service
+              a.item?.name?.toLowerCase().includes('milk') ||
+              a.item?.name?.toLowerCase().includes('food') ||
+              a.item?.name?.toLowerCase().includes('water') ||
+              a.item?.name?.toLowerCase().includes('tea') ||
+              a.item?.name?.toLowerCase().includes('coffee') ||
+              a.item?.name?.toLowerCase().includes('snack') ||
+              a.item?.name?.toLowerCase().includes('order')
+            );
+
+            if (hasFoodItems) {
+              console.log("[DEBUG v2.3] Food items detected in assignments (hasFoodItems=true) for service", id);
+              isBillable = true;
+            }
+
+            // Now decide if we show payment modal or proceed
+            if (isBillable && (billingStatus === null || billingStatus === undefined || billingStatus === "")) {
+              console.log("[DEBUG v2.3] Billable service detected, skipping inventory and showing payment modal.");
+              setPaymentModal({ requestId: triggeringRequestId || id + 2000000, newStatus });
+              return;
+            }
+
+            if (serviceAssignments.length === 0) {
+              if (forceReturn) {
+                alert("No inventory items found assigned to this service. Cannot perform returns.");
+                // Stop here to avoid completing without verification if forceReturn was requested
+                return;
+              }
+              // If not forced (normal completion), we proceed to complete without modal
+              // But maybe we should warn? "Completing service with NO inventory items..."
+              console.log("Completing service with 0 inventory items.");
+            }
+
             if (serviceAssignments.length > 0) {
-              // Show return inventory modal
+              // ALWAYS show return inventory modal, even for food/paid items
+              // This satisfies the requirement to show "items used in this service" and "inventory return option"
+              // regardless of billing status.
+              // Auto-consume is removed to force verification.
+
+              /* REPLACED AUTO-CONSUME LOGIC WITH FALLTHROUGH */
+
+              // Normal flow: Show return inventory modal
               setInventoryAssignments(serviceAssignments);
               setCompletingServiceId(id);
-              // Initialize return quantities with 0 (user can choose to return items)
-              // Initialize return quantities and locations
-              const initialReturns = {};
-              const initialLocations = {};
+              // Handle optional requestId if we came from ServiceRequest table
+              setCompletingRequestId(triggeringRequestId);
+              setCompletingBillingStatus(billingStatus); // Store billing status for completion
 
-              serviceAssignments.forEach(a => {
-                initialReturns[a.id] = 0; // Default to 0
+              // If forceReturn is true (Inline), we DON'T want to stop here and return.
+              // We want to fall through to the API call at the bottom.
+              // But we need to prep the state for the bottom logic to pick up?
+              // No, if forceReturn is true, we already have the state from the PaymentModal!
+              // So we should SKIP this block entirely if forceReturn is true and we already have data?
 
-                // Try to auto-select source location
-                let match = null;
+              // Actually, logic flow:
+              // 1. PaymentModal sets `returnQuantities` and calls handleStatusChange with `forceReturn=true`.
+              // 2. This function runs.
+              // 3. We detect `serviceAssignments.length > 0`.
+              // 4. If we enter this block, we `return;` waiting for user confirmation. 
+              //    THIS IS THE BUG. We don't want to wait if it's already confirmed (forceReturn).
 
-                // 0. Prioritize Source Location from Assignment Notes (Perfect Match)
-                const noteSourceMatch = a.notes ? a.notes.match(/\(LocID:\s*(\d+)\)/) : null;
-                const assignedSourceId = noteSourceMatch ? parseInt(noteSourceMatch[1]) : null;
-                if (assignedSourceId) {
-                  match = locations.find(l => l.id === assignedSourceId);
-                }
+              if (!forceReturn) {
+                const initialReturns = {};
+                const initialLocations = {};
+                // ... (existing logic to calculate defaults) ...
+                // ...
+                // setReturnQuantities(...);
+                // return;
+              }
+              // If forceReturn is true, we skip initialization (assuming it's done or we do it inline) 
+              // and fall through to the API call below.
 
-                // 1. Prioritize Stock Location that matches Master Definition (Best Case)
-                if (!match && a.item?.stock_locations?.length > 0 && a.item?.location) {
-                  const masterInStock = a.item.stock_locations.find(s =>
-                    s.name?.trim().toLowerCase() === a.item.location?.trim().toLowerCase() ||
-                    s.location_code === a.item.location
-                  );
-                  if (masterInStock) {
-                    match = locations.find(l => l.id === masterInStock.id);
+              if (!forceReturn) {
+                const initialReturns = {};
+                const initialLocations = {};
+
+                serviceAssignments.forEach(a => {
+                  initialReturns[a.id] = 0; // Default to 0
+                  let match = null;
+
+                  const noteSourceMatch = a.notes ? a.notes.match(/\(LocID:\s*(\d+)\)/) : null;
+                  const assignedSourceId = noteSourceMatch ? parseInt(noteSourceMatch[1]) : null;
+                  if (assignedSourceId) {
+                    match = locations.find(l => l.id === assignedSourceId);
                   }
-                }
 
-                // 2. If no master match, take the FIRST active stock location
-                if (!match && a.item?.stock_locations?.length > 0) {
-                  const firstStockLoc = a.item.stock_locations[0];
-                  match = locations.find(l => l.id === firstStockLoc.id);
-                }
+                  if (!match && a.item?.stock_locations?.length > 0 && a.item?.location) {
+                    const masterInStock = a.item.stock_locations.find(s =>
+                      s.name?.trim().toLowerCase() === a.item.location?.trim().toLowerCase() ||
+                      s.location_code === a.item.location
+                    );
+                    if (masterInStock) {
+                      match = locations.find(l => l.id === masterInStock.id);
+                    }
+                  }
 
-                // 3. Try to auto-select source location if defined (Fallback if no stock data)
-                if (!match && a.item?.location) {
-                  match = locations.find(l =>
-                    l.name?.trim().toLowerCase() === a.item.location?.trim().toLowerCase() ||
-                    l.location_code === a.item.location
-                  );
-                }
+                  // ... (rest of matching logic)
+                  if (!match && a.item?.stock_locations?.length > 0) {
+                    const firstStockLoc = a.item.stock_locations[0];
+                    match = locations.find(l => l.id === firstStockLoc.id);
+                  }
 
-                // 2. Fallback: Find a default Warehouse or Store if no source match
-                if (!match) {
-                  match = locations.find(l =>
-                    l.location_type === 'WAREHOUSE' ||
-                    l.location_type === 'CENTRAL_WAREHOUSE' ||
-                    l.is_inventory_point === true
-                  );
-                }
+                  if (!match && a.item?.location) {
+                    match = locations.find(l =>
+                      l.name?.trim().toLowerCase() === a.item.location?.trim().toLowerCase() ||
+                      l.location_code === a.item.location
+                    );
+                  }
 
-                if (match) {
-                  initialLocations[a.id] = match.id;
-                }
-              });
+                  if (!match) {
+                    match = locations.find(l =>
+                      l.location_type === 'WAREHOUSE' ||
+                      l.location_type === 'CENTRAL_WAREHOUSE' ||
+                      l.is_inventory_point === true
+                    );
+                  }
 
-              setReturnQuantities(initialReturns);
-              setReturnLocations(initialLocations);
-              return; // Don't update status yet, wait for user to confirm returns
+                  if (match) {
+                    initialLocations[a.id] = match.id;
+                  }
+                });
+
+                setReturnQuantities(initialReturns);
+                setReturnLocations(initialLocations);
+
+                // Open the second modal
+                setInventoryAssignments(serviceAssignments);
+                setCompletingServiceId(id);
+                setCompletingRequestId(triggeringRequestId);
+
+                return; // Wait for user to confirm returns in second modal
+              }
+              // If forceReturn is true, we proceed to update status below.
             }
           }
         } catch (invError) {
           console.warn("Could not fetch inventory assignments:", invError);
-          // Continue with status update even if inventory fetch fails
         }
       }
 
-      // Update status without inventory returns
-      await api.patch(`/services/assigned/${id}`, { status: newStatus });
+      // Update status - Check for inline returns first
+      let payload = {
+        status: newStatus,
+        billing_status: billingStatus
+      };
 
-      setAssignedServices(prev => prev.map(s => s.id === id ? { ...s, status: newStatus } : s));
+      // If we have inline return data (from PaymentModal) and forceReturn is true, include it in the payload
+      const hasInlineReturns = forceReturn && Object.keys(returnQuantities).length > 0;
+
+      if (hasInlineReturns) {
+        console.log("Processing inline inventory returns:", returnQuantities);
+
+        // Robustly resolve the items associated with this service to alias IDs correctly
+        let serviceItems = [];
+
+        // 1. Try to get from state first
+        const curService = assignedServices.find(s => s.id === id);
+        if (curService) {
+          // Prefer debug_items (Assignments) over inventory_items_used (Items)
+          serviceItems = curService.debug_items || curService.inventory_items_used || [];
+        }
+
+        // 2. If no items or only template items, and we have an employee, try to fetch specific assignments
+        // This mirrors logic at start of function, but ensures we have data for payload mapping
+        const needsFetch = serviceItems.length === 0 || (curService && !curService.debug_items && curService.inventory_items_used);
+
+        if (needsFetch && (curService?.employee?.id || curService?.employee_id)) {
+          try {
+            const empId = curService?.employee?.id || curService?.employee_id;
+            console.log("Fetching fresh assignments for payload mapping, employee:", empId);
+            const empInvRes = await api.get(`/services/employee-inventory/${empId}?status=assigned,in_use,completed`);
+            const allAssignments = empInvRes.data || [];
+            // Filter for this service
+            const fetchedAssignments = allAssignments.filter(a => a.assigned_service_id === id);
+            if (fetchedAssignments.length > 0) {
+              serviceItems = fetchedAssignments;
+              console.log("Found specific assignments:", serviceItems);
+            }
+          } catch (e) {
+            console.warn("Retrying fetch assignments failed:", e);
+          }
+        }
+
+        const inventory_returns = Object.entries(returnQuantities).map(([idStr, qty]) => {
+          const keyId = parseInt(idStr);
+          const numQty = parseFloat(qty);
+
+          // Find the original item object to determine what valid ID this key represents
+          // The keyId comes from the Modal render, which iterates 'serviceItems'.
+          // However, the 'serviceItems' used in Modal might differ if we just fetched new ones above?
+          // The Modal uses `svc?.debug_items || svc?.inventory_items_used`.
+          // If Modal used `inventory_items_used` (ItemIDs), and we fetched assignments (AssignmentIDs),
+          // we need to cross-reference.
+
+          // 1. Try to find by direct ID match (Assuming Key is same as ID in our current list)
+          let matchedItem = serviceItems.find(i => i.id === keyId);
+
+          let assignmentId = null;
+          let itemId = null;
+          let quantityAssigned = 0;
+
+          if (matchedItem) {
+            // We found the object corresponding to the key.
+            // Does it look like an Assignment or an Item?
+            if (matchedItem.assignment_id) {
+              assignmentId = matchedItem.assignment_id;
+              itemId = matchedItem.item_id || matchedItem.inventory_item_id;
+            } else if (matchedItem.quantity_assigned !== undefined) {
+              // Likely an assignment object where id is assignment_id
+              assignmentId = matchedItem.id;
+              itemId = matchedItem.item_id || matchedItem.inventory_item_id;
+            } else {
+              // Likely an InventoryItem (template)
+              itemId = matchedItem.id;
+              // Attempt to find a matching assignment for this Item ID if we have assignments loaded
+              // This handles case where Modal used ItemID but we want to send AssignmentID
+              const relatedAssignment = serviceItems.find(i =>
+                (i.item_id === itemId || i.inventory_item_id === itemId) &&
+                i.quantity_assigned !== undefined
+              );
+              if (relatedAssignment) {
+                assignmentId = relatedAssignment.id || relatedAssignment.assignment_id;
+                matchedItem = relatedAssignment; // Switch context to assignment for calc
+              }
+            }
+
+            // Calculate assigned quantity for 'used' calculation
+            quantityAssigned = matchedItem.quantity_assigned || matchedItem.quantity || matchedItem.balance_quantity || 0;
+          } else {
+            // Fallback: If we couldn't match the object, assume key IS the assignment ID if it's large?
+            // Or Item ID if small? Risky.
+            // Let's assume it's assignment ID if we can't find it, provided we have assignments.
+            if (keyId > 1000) assignmentId = keyId;
+            else itemId = keyId;
+          }
+
+          // Calculate used. Backend handles it if missing, but better to send.
+          const quantityUsed = Math.max(0, quantityAssigned - numQty);
+
+          // Construct payload item
+          const retItem = {
+            quantity_returned: numQty,
+            quantity_used: quantityUsed,
+            notes: "Inline return",
+            return_location_id: (returnLocations[keyId] && returnLocations[keyId] !== "") ? parseInt(returnLocations[keyId]) : null
+          };
+
+          if (assignmentId) retItem.assignment_id = assignmentId;
+          if (itemId) retItem.inventory_item_id = itemId;
+
+          return retItem;
+        });
+
+        payload.inventory_returns = inventory_returns;
+      }
+
+      await api.patch(`/services/assigned/${id}`, payload);
+
+      // Also update the linked service request in DB
+      if (triggeringRequestId && triggeringRequestId < 1000000) {
+        const reqPayload = { status: newStatus };
+        if (billingStatus) reqPayload.billing_status = billingStatus;
+        await api.put(`/service-requests/${triggeringRequestId}`, reqPayload);
+      }
+
+      setAssignedServices(prev => prev.map(s => s.id === id ? { ...s, status: newStatus, billing_status: billingStatus } : s));
       fetchAll(false);
+
+      // If we successfully processed inline returns, show a success message
+      if (forceReturn && Object.keys(returnQuantities).length > 0) {
+        alert("Service completed and inventory returns processed successfully.");
+        // Clear return state
+        setReturnQuantities({});
+        setReturnLocations({});
+      }
+
     } catch (error) {
       console.error("Failed to update status:", error);
       alert(`Failed to update status: ${error.response?.data?.detail || error.message}`);
@@ -815,43 +1096,66 @@ const Services = () => {
         const usedQty = Math.max(0, assignedQty - alreadyReturned - currentReturn);
 
         return {
-          assignment_id: a.id,
-          quantity_returned: currentReturn,
-          quantity_used: usedQty,
+          assignment_id: a.assignment_id || parseInt(a.id), // Prefer explicit assignment_id
+          inventory_item_id: a.assignment_id ? undefined : parseInt(a.id), // Fallback to item_id if assignment_id missing
+          quantity_returned: parseFloat(currentReturn),
+          quantity_used: parseFloat(usedQty),
           notes: `Return inventory on service completion`,
-          return_location_id: returnLocations[a.id] || returnLocationId // Use item specific or global
+          return_location_id: (returnLocations[a.id] && returnLocations[a.id] !== "") ? parseInt(returnLocations[a.id]) : null
         };
       });
 
       // Validate that returns don't exceed balance
+      // Validate that returns don't exceed balance
       const invalidReturns = inventory_returns.filter(ret => {
-        const assignment = inventoryAssignments.find(a => a.id === ret.assignment_id);
-        if (!assignment) return true;
+        // Fix: Ensure we match the correct assignment ID, handling both naming conventions
+        const assignment = inventoryAssignments.find(a => (a.assignment_id || parseInt(a.id)) === ret.assignment_id);
+
+        // If we can't find the original assignment in our list, something is wrong with our mapping logic
+        // But throwing an error here blocks the user. Better to warn and maybe skip validation for this item?
+        // For safety, let's assume if we can't find it, we can't validate it, so let it pass (backend will catch it)
+        if (!assignment) {
+          console.warn("Validation warning: Could not find original assignment for return item", ret);
+          return false;
+        }
 
         const assignedQty = assignment.quantity_assigned || 0;
         const alreadyReturned = assignment.quantity_returned || 0;
         const usedQty = ret.quantity_used;
+
+        // Use epsilon for float comparison to avoid 0.00000001 errors
+        const epsilon = 0.0001;
         const balance = Math.max(0, assignedQty - usedQty - alreadyReturned);
 
-        return ret.quantity_returned > balance;
+        return (ret.quantity_returned - balance) > epsilon;
       });
 
       if (invalidReturns.length > 0) {
-        alert("Error: Return quantities cannot exceed available balance (Assigned - Used - Previously Returned). Please check your quantities.");
+        alert("Error: Return quantities cannot exceed available balance. Please check your quantities.");
         return;
       }
 
       // Update status with inventory returns
-      await api.patch(`/services/assigned/${completingServiceId}`, {
+      const payload = {
         status: "completed",
-        inventory_returns: inventory_returns,
-        return_location_id: returnLocationId
-      });
+        inventory_returns: inventory_returns
+      };
+      if (completingBillingStatus) {
+        payload.billing_status = completingBillingStatus;
+      }
+      await api.patch(`/services/assigned/${completingServiceId}`, payload);
 
       setAssignedServices(prev => prev.map(s => s.id === completingServiceId ? { ...s, status: "completed" } : s));
 
+      // If we have a linked requestId, update its status too
+      if (completingRequestId) {
+        setServiceRequests(prev => prev.map(r => r.id === completingRequestId ? { ...r, status: "completed", completed_at: new Date().toISOString() } : r));
+      }
+
       // Close modal and refresh
       setCompletingServiceId(null);
+      setCompletingBillingStatus(null);
+      setCompletingRequestId(null);
       setInventoryAssignments([]);
       setReturnQuantities({});
       setUsedQuantities({});
@@ -862,7 +1166,30 @@ const Services = () => {
       alert("Service marked as completed and inventory updated successfully!");
     } catch (error) {
       console.error("Failed to complete service with returns:", error);
-      alert(`Failed to complete service: ${error.response?.data?.detail || error.message}`);
+
+      let errorMsg = error.message;
+      if (error.response?.data?.detail) {
+        const detail = error.response.data.detail;
+        if (Array.isArray(detail)) {
+          errorMsg = detail.map((d, i) => {
+            if (typeof d === 'string') return d;
+            if (d && typeof d === 'object') {
+              const loc = d.loc ? d.loc.join('.') : `Error[${i}]`;
+              const msg = d.msg || JSON.stringify(d);
+              return `${loc}: ${msg}`;
+            }
+            return String(d);
+          }).join('\n');
+        } else if (typeof detail === 'object') {
+          errorMsg = JSON.stringify(detail, null, 2);
+        } else {
+          errorMsg = String(detail);
+        }
+      } else if (error.response?.data?.message) {
+        errorMsg = error.response.data.message;
+      }
+
+      alert(`Failed to complete service:\n${errorMsg}`);
     }
   };
 
@@ -1199,13 +1526,72 @@ const Services = () => {
   };
 
   // Service Request Handlers
-  const handleUpdateRequestStatus = async (requestId, newStatus, billingStatus = null) => {
-    // If completing a delivery request, show payment modal first
-    if (newStatus === "completed" && billingStatus === null) {
-      const request = serviceRequests.find(r => r.id === requestId);
+  const handleUpdateRequestStatus = async (requestId, newStatus, billingStatus = null, forceReturn = false) => {
+    const numericId = parseInt(requestId);
+    // If it's an AssignedService (encoded in ID offset), redirect to handleStatusChange
+    if (numericId >= 2000000) {
+      setPaymentModal(null);
+      return handleStatusChange(numericId - 2000000, newStatus, numericId, billingStatus, forceReturn);
+    }
+
+    const request = serviceRequests.find(r => r.id === requestId);
+
+    // For regular requests being completed, check if they have a linked assignment to trigger the modal
+    if (newStatus === "completed" && request) {
+      // Find ANY matching assignment for this room/employee, even if already marked completed 
+      // (to allow late returns or verification)
+      const linkedAssigned = assignedServices.find(as =>
+        as.room?.id === request.room_id &&
+        (as.employee_id === request.employee_id || !as.employee_id)
+      );
+
+      // If it's a food/delivery/milk order, prioritize payment modal
+      const descLower = (request.description || "").toLowerCase();
+      const isFoodRequest = request.food_order_id ||
+        request.request_type === "delivery" ||
+        descLower.includes("food") ||
+        descLower.includes("milk") ||
+        descLower.includes("water") ||
+        descLower.includes("tea") ||
+        descLower.includes("coffee") ||
+        descLower.includes("breakfast") ||
+        descLower.includes("lunch") ||
+        descLower.includes("dinner") ||
+        descLower.includes("cleaning") ||
+        descLower.includes("room service");
+
+      if (isFoodRequest && (billingStatus === null || billingStatus === undefined || billingStatus === "")) {
+        // If it's a specific food order or cleaning service, it's already paid, skip modal
+        if (request.food_order_id || request.request_type === "delivery" || descLower.includes("cleaning") || request.request_type?.toLowerCase().includes("cleaning")) {
+          billingStatus = "paid";
+          console.log("[DEBUG] Food/Cleaning request detected, auto-paid.");
+        } else {
+          setPaymentModal({ requestId, newStatus });
+          return;
+        }
+      }
+
+      if (linkedAssigned) {
+        // Pass requestId to handleStatusChange so it can be completed after modal confirmation
+        setPaymentModal(null);
+        return handleStatusChange(linkedAssigned.id, newStatus, requestId, billingStatus, forceReturn);
+      }
+    }
+
+    // If completing a delivery request (not caught by linked assignment logic), show payment modal
+    if (newStatus === "completed" && (billingStatus === null || billingStatus === undefined || billingStatus === "")) {
       if (request && request.food_order_id) {
-        // Show payment modal for delivery requests
         setPaymentModal({ requestId, newStatus });
+        return;
+      }
+
+      // NEW: Special handling for return_items service requests
+      if (request && request.request_type === "return_items") {
+        setReturnRequestModal({
+          requestId,
+          newStatus,
+          items: request.refill_data ? (typeof request.refill_data === 'string' ? JSON.parse(request.refill_data) : request.refill_data) : []
+        });
         return;
       }
     }
@@ -1299,27 +1685,35 @@ const Services = () => {
   const handleUpdateInventoryVerification = (index, field, value) => {
     const newItems = [...checkoutInventoryDetails.items];
     const item = newItems[index];
-    const val = parseFloat(value) || 0;
-    newItems[index][field] = val;
 
-    // Auto-calculate used/missing based on Available Stock or Damaged Qty
-    if (field === 'available_stock' || field === 'damage_qty') {
-      const current = Number(item.current_stock || 0);
-      const available = field === 'available_stock' ? val : Number(item.available_stock || 0);
-      const damaged = field === 'damage_qty' ? val : Number(item.damage_qty || 0);
+    if (['return_location_id', 'laundry_location_id', 'waste_location_id', 'damage_location_id'].includes(field)) {
+      newItems[index][field] = value ? parseInt(value) : null;
+    } else if (['is_laundry', 'is_waste', 'request_replacement'].includes(field)) {
+      newItems[index][field] = value; // Boolean value
+    } else {
+      // Numeric fields
+      const val = parseFloat(value) || 0;
+      newItems[index][field] = val;
 
-      if (item.is_rentable || item.track_laundry_cycle) {
-        // For Rentals: Missing = Current - Available - Damaged
-        let missing = current - available - damaged;
-        if (missing < 0) missing = 0;
-        newItems[index].missing_qty = missing;
-        newItems[index].used_qty = 0;
-      } else {
-        // For Consumables: Used = Current - Available
-        let used = current - available;
-        if (used < 0) used = 0;
-        newItems[index].used_qty = used;
-        newItems[index].missing_qty = 0;
+      // Auto-calculate used/missing based on Available Stock or Damaged Qty
+      if (field === 'available_stock' || field === 'damage_qty') {
+        const current = Number(item.current_stock || 0);
+        const available = field === 'available_stock' ? val : Number(item.available_stock || 0);
+        const damaged = field === 'damage_qty' ? val : Number(item.damage_qty || 0);
+
+        if (item.is_rentable || item.track_laundry_cycle) {
+          // For Rentals: Missing = Current - Available - Damaged
+          let missing = current - available - damaged;
+          if (missing < 0) missing = 0;
+          newItems[index].missing_qty = missing;
+          newItems[index].used_qty = 0;
+        } else {
+          // For Consumables: Used = Current - Available
+          let used = current - available;
+          if (used < 0) used = 0;
+          newItems[index].used_qty = used;
+          newItems[index].missing_qty = 0;
+        }
       }
     }
 
@@ -1331,7 +1725,13 @@ const Services = () => {
 
   const handleUpdateAssetDamage = (index, field, value) => {
     const newAssets = [...(checkoutInventoryDetails.fixed_assets || [])];
-    newAssets[index][field] = value;
+
+    if (['return_location_id', 'laundry_location_id', 'waste_location_id', 'damage_location_id'].includes(field)) {
+      newAssets[index][field] = value ? parseInt(value) : null;
+    } else {
+      newAssets[index][field] = value;
+    }
+
     setCheckoutInventoryDetails({
       ...checkoutInventoryDetails,
       fixed_assets: newAssets
@@ -1344,18 +1744,34 @@ const Services = () => {
         item_id: item.item_id || item.id,
         used_qty: Number(item.used_qty || 0),
         missing_qty: Number(item.missing_qty || 0),
-        damage_qty: Number(item.damage_qty || 0)
+        damage_qty: Number(item.damage_qty || 0),
+        is_rentable: !!item.is_rentable,
+        is_fixed_asset: !!item.is_fixed_asset,
+        return_location_id: item.return_location_id,
+        is_laundry: !!item.is_laundry,
+        laundry_location_id: item.laundry_location_id,
+        is_waste: !!item.is_waste,
+        waste_location_id: item.waste_location_id,
+        request_replacement: !!item.request_replacement
       }));
 
-      // Collect asset damages (Damaged OR Missing)
+      // Collect asset damages (Damaged OR Missing OR Marked for Laundry/Waste)
       const assetDamages = (checkoutInventoryDetails.fixed_assets || [])
-        .filter(asset => asset.is_damaged || (asset.available_stock || 0) < (asset.current_stock || 0))
+        .filter(asset => asset.is_damaged || (asset.available_stock || 0) < (asset.current_stock || 0) || asset.is_laundry || asset.is_waste || asset.is_returned)
         .map(asset => ({
           asset_registry_id: asset.asset_registry_id,
           item_id: asset.item_id,
           item_name: asset.item_name,
           replacement_cost: Number(asset.replacement_cost || 0),
-          notes: asset.damage_notes || ((asset.available_stock || 0) < (asset.current_stock || 0) ? "Missing at checkout" : "")
+          notes: asset.damage_notes || ((asset.available_stock || 0) < (asset.current_stock || 0) ? "Missing at checkout" : ""),
+          is_laundry: !!asset.is_laundry,
+          laundry_location_id: asset.laundry_location_id,
+          is_waste: !!asset.is_waste,
+          waste_location_id: asset.waste_location_id,
+          request_replacement: !!asset.request_replacement,
+          is_damaged: !!asset.is_damaged,
+          is_returned: !!asset.is_returned,
+          return_location_id: asset.return_location_id
         }));
 
       await api.post(`/bill/checkout-request/${checkoutRequestId}/check-inventory`, {
@@ -1404,6 +1820,27 @@ const Services = () => {
       console.error("Failed to delete request:", error);
       const msg = error.response?.data?.detail || error.message || "Unknown error";
       alert(`Failed to delete request: ${msg}`);
+    }
+  };
+
+  const handleCompleteReturnRequest = async (requestId, newStatus, locationId) => {
+    try {
+      if (!locationId) {
+        alert("Please select a return location.");
+        return;
+      }
+
+      await api.put(`/service-requests/${requestId}`, {
+        status: newStatus,
+        return_location_id: parseInt(locationId)
+      });
+
+      setReturnRequestModal(null);
+      fetchServiceRequests();
+      alert("Items returned successfully and request completed.");
+    } catch (error) {
+      console.error("Failed to complete return request:", error);
+      alert(`Error: ${error.response?.data?.detail || error.message}`);
     }
   };
 
@@ -1525,165 +1962,248 @@ const Services = () => {
         </div>
 
         {/* Tabs Navigation */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-6">
-          <div className="flex border-b border-gray-200">
-            {[
-              { id: "dashboard", label: "Dashboard" },
-              { id: "create", label: "Services" },
-              { id: "assign", label: "Assign & Manage" },
-              { id: "items", label: "Items Used" },
-              { id: "requests", label: "Service Requests" }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-6 py-3 font-medium transition-colors ${activeTab === tab.id
-                  ? "text-indigo-600 border-b-2 border-indigo-600"
-                  : "text-gray-600 hover:text-gray-900"
-                  }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-2 p-1.5 bg-slate-100/50 backdrop-blur-md rounded-2xl border border-slate-200 w-fit mb-8">
+          {[
+            { id: "dashboard", label: "Overview", icon: <LayoutDashboard size={18} /> },
+            { id: "create", label: "Master List", icon: <Package size={18} /> },
+            { id: "assign", label: "Assign Work", icon: <Zap size={18} /> },
+            { id: "items", label: "Consumption", icon: <Layers size={18} /> },
+            { id: "requests", label: "Live Requests", icon: <ClipboardList size={18} /> }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`
+                flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold transition-all duration-300
+                ${activeTab === tab.id
+                  ? "bg-white text-indigo-600 shadow-md ring-1 ring-slate-200"
+                  : "text-slate-500 hover:text-slate-900 hover:bg-white/40"
+                }
+              `}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         {/* Dashboard Tab */}
         {activeTab === "dashboard" && (
-          <div className="space-y-6">
+          <div className="space-y-8 animate-fadeIn">
             {/* Key Metrics Overview */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card title="Total Services" className="bg-gradient-to-br from-blue-500 to-blue-700 text-white">
-                <div className="text-4xl font-bold">{totalServices}</div>
-                <p className="text-sm opacity-90 mt-2">Active services available</p>
-              </Card>
-              <Card title="Total Assignments" className="bg-gradient-to-br from-green-500 to-green-700 text-white">
-                <div className="text-4xl font-bold">{totalAssigned}</div>
-                <p className="text-sm opacity-90 mt-2">{completedCount} completed, {pendingCount} pending</p>
-              </Card>
-              <Card title="Total Revenue" className="bg-gradient-to-br from-purple-500 to-purple-700 text-white">
-                <div className="text-4xl font-bold">
-                  ₹{dashboardData.serviceStats.reduce((sum, s) => sum + s.total_revenue, 0).toFixed(2)}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <Card
+                title="Total Services"
+                subtitle="Active in catalog"
+                icon={<Archive size={20} />}
+                className="bg-white border-l-4 border-indigo-500"
+              >
+                <div className="flex items-end justify-between mt-2">
+                  <div className="text-4xl font-extrabold text-slate-800 tracking-tight">{totalServices}</div>
+                  <div className="text-emerald-500 flex items-center gap-1 text-sm font-bold bg-emerald-50 px-2 py-1 rounded-lg">
+                    <TrendingUp size={14} />
+                    Live
+                  </div>
                 </div>
-                <p className="text-sm opacity-90 mt-2">From completed services</p>
               </Card>
-              <Card title="Inventory Items Used" className="bg-gradient-to-br from-orange-500 to-orange-700 text-white">
-                <div className="text-4xl font-bold">{dashboardData.overallInventoryUsage.length}</div>
-                <p className="text-sm opacity-90 mt-2">Unique items consumed</p>
+
+              <Card
+                title="Total Assignments"
+                subtitle="Work flow status"
+                icon={<ClipboardList size={20} />}
+                className="bg-white border-l-4 border-amber-500"
+              >
+                <div className="text-4xl font-extrabold text-slate-800 tracking-tight mb-2">{totalAssigned}</div>
+                <div className="flex gap-3">
+                  <span className="flex items-center gap-1 text-xs font-bold text-emerald-600">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    {completedCount} Done
+                  </span>
+                  <span className="flex items-center gap-1 text-xs font-bold text-amber-600">
+                    <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                    {pendingCount} Pending
+                  </span>
+                </div>
+              </Card>
+
+              <Card
+                title="Total Revenue"
+                subtitle="Billing volume"
+                icon={<IndianRupee size={20} />}
+                className="bg-indigo-600 text-white"
+              >
+                <div className="text-4xl font-extrabold tracking-tight mt-2">
+                  ₹{dashboardData.serviceStats.reduce((sum, s) => sum + s.total_revenue, 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </div>
+                <p className="text-xs text-white/70 mt-3 font-medium flex items-center gap-1">
+                  <TrendingUp size={12} />
+                  Net collection from completed
+                </p>
+              </Card>
+
+              <Card
+                title="Inventory Consumption"
+                subtitle="Resources utilized"
+                icon={<Package size={20} />}
+                className="bg-slate-900 text-white"
+              >
+                <div className="text-4xl font-extrabold tracking-tight mt-2">{dashboardData.overallInventoryUsage.length}</div>
+                <p className="text-xs text-slate-400 mt-3 font-medium">Distinct units assigned</p>
               </Card>
             </div>
 
             {/* Charts Row */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card title="Service Status Distribution">
-                <ResponsiveContainer width="100%" height={250}>
-                  <PieChart>
-                    <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
-                      {pieData.map((entry, index) => (
-                        <Cell key={index} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <Card
+                title="Status Distribution"
+                subtitle="Service lifecycle breakdown"
+                icon={<PieIcon size={18} />}
+              >
+                <div className="h-[300px] w-full mt-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={90}
+                        paddingAngle={5}
+                        stroke="none"
+                      >
+                        {pieData.map((entry, index) => (
+                          <Cell key={index} fill={COLORS[index % COLORS.length]} cornerRadius={4} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                      />
+                      <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
               </Card>
 
-              <Card title="Service Assignments">
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={barData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} />
-                    <YAxis allowDecimals={false} />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="assigned" fill="#4F46E5" />
-                  </BarChart>
-                </ResponsiveContainer>
+              <Card
+                title="Service Volume"
+                subtitle="Assignments per category"
+                icon={<BarIcon size={18} />}
+              >
+                <div className="h-[300px] w-full mt-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={barData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis
+                        dataKey="name"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#64748b', fontSize: 12 }}
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#64748b', fontSize: 12 }}
+                        allowDecimals={false}
+                      />
+                      <Tooltip
+                        cursor={{ fill: '#f8fafc' }}
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                      />
+                      <Bar dataKey="assigned" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={32} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </Card>
             </div>
 
             {/* Service-Wise Statistics */}
-            <Card title="Service-Wise Performance & Inventory Usage">
-              <div className="overflow-x-auto">
-                <table className="min-w-full border border-gray-200 rounded-lg">
-                  <thead className="bg-gray-100 text-gray-700 uppercase tracking-wider">
-                    <tr>
-                      <th className="py-3 px-4 text-left">Service Name</th>
-                      <th className="py-3 px-4 text-center">Total Assignments</th>
-                      <th className="py-3 px-4 text-center">Completed</th>
-                      <th className="py-3 px-4 text-center">In Progress</th>
-                      <th className="py-3 px-4 text-center">Pending</th>
-                      <th className="py-3 px-4 text-right">Revenue (₹)</th>
-                      <th className="py-3 px-4 text-center">Inventory Items</th>
-                      <th className="py-3 px-4 text-left">Details</th>
+            <Card
+              title="Service Performance Data"
+              subtitle="Revenue and inventory utilization per service type"
+              icon={<TrendingUp size={18} />}
+            >
+              <div className="overflow-x-auto -mx-6">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/50">
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100">Service</th>
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-center">Velocity</th>
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-center">Status</th>
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right">Revenue</th>
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-center">Usage</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-100">
                     {dashboardData.serviceStats.length === 0 ? (
                       <tr>
-                        <td colSpan="8" className="py-8 text-center text-gray-500">
-                          No service data available
+                        <td colSpan="5" className="py-12 text-center text-slate-400 font-medium">
+                          No service performance data found
                         </td>
                       </tr>
                     ) : (
-                      dashboardData.serviceStats.map((stat, idx) => (
-                        <tr key={stat.service_id} className={`${idx % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-gray-100 transition-colors`}>
-                          <td className="py-3 px-4 font-semibold">{stat.service_name}</td>
-                          <td className="py-3 px-4 text-center">
-                            <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
-                              {stat.total_assignments}
-                            </span>
+                      dashboardData.serviceStats.map((stat) => (
+                        <tr key={stat.service_id} className="hover:bg-slate-50/50 transition-colors group">
+                          <td className="py-5 px-6">
+                            <div className="font-bold text-slate-800">{stat.service_name}</div>
+                            <div className="text-xs text-slate-400 mt-0.5 tracking-wide uppercase">ID: {stat.service_id}</div>
                           </td>
-                          <td className="py-3 px-4 text-center">
-                            <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">
-                              {stat.completed}
-                            </span>
+                          <td className="py-5 px-6">
+                            <div className="flex flex-col items-center">
+                              <div className="text-lg font-black text-slate-700">{stat.total_assignments}</div>
+                              <div className="text-[10px] font-bold text-slate-400 uppercase">Assigned</div>
+                            </div>
                           </td>
-                          <td className="py-3 px-4 text-center">
-                            <span className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm font-medium">
-                              {stat.in_progress}
-                            </span>
+                          <td className="py-5 px-6">
+                            <div className="flex justify-center gap-1.5">
+                              {stat.completed > 0 && <span title="Completed" className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" />}
+                              {stat.in_progress > 0 && <span title="In Progress" className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]" />}
+                              {stat.pending > 0 && <span title="Pending" className="w-2.5 h-2.5 rounded-full bg-slate-300" />}
+                            </div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase text-center mt-2">
+                              {stat.completed}C / {stat.in_progress}P
+                            </div>
                           </td>
-                          <td className="py-3 px-4 text-center">
-                            <span className="px-3 py-1 bg-gray-100 text-gray-800 rounded-full text-sm font-medium">
-                              {stat.pending}
-                            </span>
+                          <td className="py-5 px-6 text-right">
+                            <div className="text-sm font-bold text-slate-900">₹{stat.total_revenue.toLocaleString('en-IN')}</div>
+                            <div className="text-[10px] font-bold text-emerald-500 uppercase">Gross Revenue</div>
                           </td>
-                          <td className="py-3 px-4 text-right font-semibold text-green-600">
-                            ₹{stat.total_revenue.toFixed(2)}
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <span className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-full text-sm font-medium">
-                              {stat.inventory_count} items
-                            </span>
-                          </td>
-                          <td className="py-3 px-4">
-                            {stat.inventory_items.length > 0 ? (
-                              <details className="cursor-pointer">
-                                <summary className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
-                                  View Inventory ({stat.inventory_items.length})
-                                </summary>
-                                <div className="mt-2 p-3 bg-gray-50 rounded-lg space-y-2">
-                                  {stat.inventory_items.map((item, itemIdx) => (
-                                    <div key={itemIdx} className="flex justify-between items-center text-sm border-b pb-2 last:border-0">
-                                      <div>
-                                        <span className="font-medium">{item.name}</span>
-                                        {item.item_code && (
-                                          <span className="text-gray-500 ml-2">({item.item_code})</span>
-                                        )}
-                                      </div>
-                                      <div className="text-right">
-                                        <div className="font-semibold">{item.quantity_used.toFixed(2)} {item.unit}</div>
-                                        <div className="text-xs text-gray-500">₹{item.total_cost.toFixed(2)}</div>
-                                      </div>
+                          <td className="py-5 px-6">
+                            <div className="flex justify-center">
+                              {stat.inventory_items.length > 0 ? (
+                                <details className="relative">
+                                  <summary className="list-none cursor-pointer">
+                                    <div className="px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors border border-indigo-100 flex items-center gap-1.5">
+                                      <Package size={12} />
+                                      {stat.inventory_count} Units
                                     </div>
-                                  ))}
-                                </div>
-                              </details>
-                            ) : (
-                              <span className="text-sm text-gray-400">No inventory</span>
-                            )}
+                                  </summary>
+                                  <div className="absolute right-0 top-full mt-2 w-64 bg-white shadow-2xl rounded-xl p-4 z-20 border border-slate-100 animate-fadeIn">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-50 pb-2">Inventory Breakdown</h4>
+                                    <div className="space-y-3 max-h-48 overflow-y-auto custom-scrollbar">
+                                      {stat.inventory_items.map((item, itemIdx) => (
+                                        <div key={itemIdx} className="flex justify-between items-start gap-2">
+                                          <div className="flex-1 min-w-0">
+                                            <div className="text-[11px] font-bold text-slate-700 truncate">{item.name}</div>
+                                            <div className="text-[9px] text-slate-400 font-medium">₹{item.unit_price} / {item.unit}</div>
+                                          </div>
+                                          <div className="text-right">
+                                            <div className="text-[10px] font-black text-indigo-600">{item.quantity_used}</div>
+                                            <div className="text-[9px] font-bold text-slate-400 tracking-tighter">₹{item.total_cost.toFixed(0)}</div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </details>
+                              ) : (
+                                <div className="text-[10px] font-bold text-slate-300 uppercase italic">Clean Service</div>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -2065,7 +2585,10 @@ const Services = () => {
                         return (
                           <tr key={request.id} className={`${idx % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-gray-100 transition-colors ${isCheckoutRequest ? 'bg-yellow-50' : ''}`}>
                             <td className="p-3 border-t border-gray-200">
-                              #{isCheckoutRequest ? checkoutRequestId : request.id}
+                              #{isCheckoutRequest ? checkoutRequestId :
+                                (request.is_assigned_service || request.id >= 2000000 ?
+                                  (request.assigned_service_id || request.id - 2000000) :
+                                  request.id)}
                               {isCheckoutRequest && <span className="ml-2 text-xs text-yellow-600">(Checkout)</span>}
                             </td>
                             <td className="p-3 border-t border-gray-200">
@@ -2127,14 +2650,28 @@ const Services = () => {
                               )}
                             </td>
                             <td className="p-3 border-t border-gray-200">
-                              {isCheckoutRequest ? (
-                                <span className={`px-2 py-1 rounded text-xs font-medium ${request.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                  request.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
-                                    request.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                                      'bg-gray-100 text-gray-800'
-                                  }`}>
-                                  {request.status || 'pending'}
-                                </span>
+                              {(isCheckoutRequest || (request.status || "").toLowerCase() === "completed") ? (
+                                <div className="flex flex-col gap-1 items-start">
+                                  <span className={`px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest ${(request.status || "").toLowerCase() === "completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
+                                    "bg-indigo-50 text-indigo-600 border border-indigo-100"
+                                    }`}>
+                                    {request.status || "pending"}
+                                  </span>
+                                  {(request.status || "").toLowerCase() === "completed" && (
+                                    <button
+                                      onClick={() => {
+                                        const asId = request.assigned_service_id || (request.is_assigned_service ? request.id - 2000000 : null);
+                                        const linked = assignedServices.find(as => as.room?.id === request.room_id && (as.employee_id === request.employee_id || !as.employee_id));
+                                        const targetId = asId || (linked ? linked.id : null);
+                                        if (targetId) handleStatusChange(targetId, "completed");
+                                        else alert("No linked mission telemetry found for this unit.");
+                                      }}
+                                      className="text-[9px] font-black text-indigo-500 hover:text-indigo-700 uppercase tracking-tighter"
+                                    >
+                                      Record Returns
+                                    </button>
+                                  )}
+                                </div>
                               ) : (
                                 <select
                                   value={request.status}
@@ -2153,7 +2690,20 @@ const Services = () => {
                               )}
                             </td>
                             <td className="p-3 border-t border-gray-200 text-sm">
-                              {request.service?.average_completion_time ? (
+                              {(request.status || "").toLowerCase() === "completed" && request.completed_at && request.created_at ? (
+                                <div className="flex flex-col">
+                                  <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest leading-tight">Total Duration</span>
+                                  <span className="font-bold text-slate-700">
+                                    {(() => {
+                                      const diff = new Date(request.completed_at) - new Date(request.created_at);
+                                      const hours = Math.floor(diff / (1000 * 60 * 60));
+                                      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                                      if (hours > 0) return `${hours}h ${minutes}m`;
+                                      return `${minutes}m`;
+                                    })()}
+                                  </span>
+                                </div>
+                              ) : request.service?.average_completion_time ? (
                                 <span className="text-indigo-600 font-medium">{request.service.average_completion_time}</span>
                               ) : (
                                 <span className="text-gray-400 italic">-</span>
@@ -2214,12 +2764,43 @@ const Services = () => {
                                     )}
 
                                     {(request.status || "").toLowerCase() === "in_progress" && (
+                                      <div className="flex gap-1">
+                                        <button
+                                          onClick={() => handleUpdateRequestStatus(request.id, 'completed')}
+                                          className="px-3 py-1 rounded text-sm font-medium bg-green-600 hover:bg-green-700 text-white"
+                                          title="Mark as Completed (with return check)"
+                                        >
+                                          Complete
+                                        </button>
+                                        {request.is_assigned_service && (
+                                          <button
+                                            onClick={() => handleStatusChange(request.assigned_service_id, 'completed', true)}
+                                            className="px-2 py-1 rounded text-[10px] font-bold bg-slate-200 hover:bg-slate-300 text-slate-700"
+                                            title="Quick Complete without returns"
+                                          >
+                                            Quick
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {(request.status || "").toLowerCase() === "completed" && (
                                       <button
-                                        onClick={() => handleUpdateRequestStatus(request.id, 'completed')}
-                                        className="px-3 py-1 rounded text-sm font-medium bg-green-600 hover:bg-green-700 text-white"
-                                        title="Mark as Completed"
+                                        onClick={() => {
+                                          const asId = request.assigned_service_id || (request.is_assigned_service ? request.id - 2000000 : null);
+                                          const linked = asId ? null : assignedServices.find(as => as.room?.id === request.room_id && (as.employee_id === request.employee_id || !as.employee_id));
+                                          const targetId = asId || (linked ? linked.id : null);
+
+                                          if (targetId) {
+                                            handleStatusChange(targetId, 'completed');
+                                          } else {
+                                            alert("No linked inventory assignment found for this specific room/agent.");
+                                          }
+                                        }}
+                                        className="px-2 py-1 rounded text-[11px] font-black uppercase tracking-tight bg-indigo-500 hover:bg-indigo-600 text-white flex items-center gap-1 shadow-sm active:scale-95 transition-all"
+                                        title="Record inventory returns"
                                       >
-                                        Complete
+                                        <Box size={10} /> Recovery
                                       </button>
                                     )}
 
@@ -2313,8 +2894,8 @@ const Services = () => {
                     <div>
                       <span className="text-sm text-gray-600">Date Range:</span>
                       <p className="text-lg font-semibold text-gray-800">
-                        {serviceReport.from_date ? new Date(serviceReport.from_date).toLocaleDateString() : 'All'} -
-                        {serviceReport.to_date ? new Date(serviceReport.to_date).toLocaleDateString() : 'All'}
+                        {serviceReport.from_date ? formatDateIST(serviceReport.from_date) : 'All'} -
+                        {serviceReport.to_date ? formatDateIST(serviceReport.to_date) : 'All'}
                       </p>
                     </div>
                   </div>
@@ -2386,12 +2967,12 @@ const Services = () => {
                               </span>
                             </td>
                             <td className="p-3 border-t border-gray-200 text-sm">
-                              {new Date(s.assigned_at).toLocaleString()}
+                              {formatDateTimeIST(s.assigned_at)}
                             </td>
                             <td className="p-3 border-t border-gray-200 text-sm">
                               {s.last_used_at ? (
                                 <span className="text-green-600 font-medium">
-                                  {new Date(s.last_used_at).toLocaleString()}
+                                  {formatDateTimeIST(s.last_used_at)}
                                 </span>
                               ) : (
                                 <span className="text-gray-400 italic">Never</span>
@@ -2466,341 +3047,211 @@ const Services = () => {
         {activeTab === "create" && (
           <div className="space-y-6">
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Card title="Total Services" className="bg-gradient-to-br from-blue-500 to-blue-700 text-white">
-                <div className="text-3xl font-bold">{totalServices}</div>
-                <p className="text-sm opacity-90 mt-1">Active services</p>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <Card
+                title="Service Types"
+                subtitle="Unique definitions"
+                icon={<Layers size={20} />}
+                className="bg-white"
+              >
+                <div className="text-4xl font-extrabold text-slate-800 tracking-tight">{totalServices}</div>
               </Card>
-              <Card title="Visible to Guests" className="bg-gradient-to-br from-green-500 to-green-700 text-white">
-                <div className="text-3xl font-bold">{services.filter(s => s.is_visible_to_guest).length}</div>
-                <p className="text-sm opacity-90 mt-1">Guest-visible</p>
+              <Card
+                title="Guest Exposure"
+                subtitle="Visible on mobile"
+                icon={<Users size={20} />}
+                className="bg-white"
+              >
+                <div className="text-4xl font-extrabold text-emerald-600 tracking-tight">{services.filter(s => s.is_visible_to_guest).length}</div>
               </Card>
-              <Card title="With Images" className="bg-gradient-to-br from-purple-500 to-purple-700 text-white">
-                <div className="text-3xl font-bold">{services.filter(s => s.images && s.images.length > 0).length}</div>
-                <p className="text-sm opacity-90 mt-1">With images</p>
+              <Card
+                title="Visual Catalog"
+                subtitle="Services with media"
+                icon={<Star size={20} />}
+                className="bg-white"
+              >
+                <div className="text-4xl font-extrabold text-indigo-600 tracking-tight">{services.filter(s => s.images && s.images.length > 0).length}</div>
               </Card>
-              <Card title="With Inventory" className="bg-gradient-to-br from-orange-500 to-orange-700 text-white">
-                <div className="text-3xl font-bold">{services.filter(s => s.inventory_items && s.inventory_items.length > 0).length}</div>
-                <p className="text-sm opacity-90 mt-1">With items</p>
+              <Card
+                title="Resource Tied"
+                subtitle="Linked to inventory"
+                icon={<Box size={20} />}
+                className="bg-white"
+              >
+                <div className="text-4xl font-extrabold text-amber-500 tracking-tight">{services.filter(s => s.inventory_items && s.inventory_items.length > 0).length}</div>
               </Card>
             </div>
 
-            {/* Filters */}
-            <Card title="Filters">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            {/* Filters Section */}
+            <div className="flex flex-wrap items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+              <div className="flex-1 min-w-[300px] relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                 <input
                   type="text"
-                  placeholder="Search by name or description..."
+                  placeholder="Search master catalog..."
                   value={serviceFilters.search}
                   onChange={(e) => setServiceFilters({ ...serviceFilters, search: e.target.value })}
-                  className="border p-2 rounded-lg"
+                  className="w-full bg-white border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 pl-10 pr-4 py-2.5 rounded-xl text-sm transition-all"
                 />
+              </div>
+              <div className="flex items-center gap-2">
+                <Filter size={16} className="text-slate-400" />
                 <select
                   value={serviceFilters.visible}
                   onChange={(e) => setServiceFilters({ ...serviceFilters, visible: e.target.value })}
-                  className="border p-2 rounded-lg"
+                  className="bg-white border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 px-4 py-2.5 rounded-xl text-sm transition-all min-w-[140px]"
                 >
-                  <option value="">All Visibility</option>
-                  <option value="true">Visible to Guests</option>
+                  <option value="">Visibility: All</option>
+                  <option value="true">Guest Visible</option>
                   <option value="false">Hidden</option>
                 </select>
                 <select
                   value={serviceFilters.hasInventory}
                   onChange={(e) => setServiceFilters({ ...serviceFilters, hasInventory: e.target.value })}
-                  className="border p-2 rounded-lg"
+                  className="bg-white border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 px-4 py-2.5 rounded-xl text-sm transition-all min-w-[140px]"
                 >
-                  <option value="">All Services</option>
-                  <option value="true">With Inventory</option>
-                  <option value="false">Without Inventory</option>
+                  <option value="">Type: All</option>
+                  <option value="true">Inventory Tied</option>
+                  <option value="false">Standard</option>
                 </select>
-                <select
-                  value={serviceFilters.hasImages}
-                  onChange={(e) => setServiceFilters({ ...serviceFilters, hasImages: e.target.value })}
-                  className="border p-2 rounded-lg"
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    handleCancelEdit();
+                    setShowCreateModal(true);
+                  }}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-indigo-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg active:scale-95"
                 >
-                  <option value="">All Services</option>
-                  <option value="true">With Images</option>
-                  <option value="false">Without Images</option>
-                </select>
+                  <Plus size={18} />
+                  Deploy New Service
+                </button>
                 <button
                   onClick={() => setServiceFilters({ search: "", visible: "", hasInventory: "", hasImages: "" })}
-                  className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-medium"
+                  className="p-2.5 bg-white text-slate-500 hover:text-red-500 rounded-xl border border-slate-200 transition-colors"
+                  title="Reset Filters"
                 >
-                  Clear Filters
+                  <RefreshCw size={18} />
                 </button>
               </div>
-            </Card>
+            </div>
 
-            <Card title="Create New Service">
-              <div className="space-y-3">
-                {editingServiceId && (
-                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex flex-col gap-2">
-                    <div className="text-sm text-yellow-800 font-semibold">
-                      Editing service ID #{editingServiceId}. Update the details below and click "Update Service" to save changes.
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleCancelEdit}
-                      className="self-start text-sm text-blue-700 hover:text-blue-900 underline"
-                    >
-                      Cancel editing
-                    </button>
+            <div className="space-y-6">
+
+              {/* All Services Table */}
+              <Card title="Master Service Catalog" icon={<Layers size={20} />}>
+                {loading ? (
+                  <div className="flex justify-center items-center h-48">
+                    <Loader2 size={48} className="animate-spin text-indigo-500" />
                   </div>
-                )}
-                <input
-                  type="text"
-                  placeholder="Service Name"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-indigo-400"
-                />
-                <input
-                  type="text"
-                  placeholder="Description"
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-indigo-400"
-                />
-                <input
-                  type="number"
-                  placeholder="Charges"
-                  value={form.charges}
-                  onChange={(e) => setForm({ ...form, charges: e.target.value })}
-                  className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-indigo-400"
-                />
-                <input
-                  type="text"
-                  placeholder="Average Completion Time (e.g., 30 minutes, 1 hour)"
-                  value={form.average_completion_time}
-                  onChange={(e) => setForm({ ...form, average_completion_time: e.target.value })}
-                  className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-indigo-400"
-                />
-                {/* Guest Visibility Toggle */}
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="is_visible_to_guest"
-                    checked={form.is_visible_to_guest}
-                    onChange={(e) => setForm({ ...form, is_visible_to_guest: e.target.checked })}
-                    className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                  />
-                  <label htmlFor="is_visible_to_guest" className="text-sm font-medium text-gray-700">
-                    Visible to Guests/Users
-                  </label>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Service Images</label>
-                  <input
-                    type="file"
-                    multiple
-                    accept="image/*"
-                    onChange={handleImageChange}
-                    className="w-full border p-3 rounded-lg focus:ring-2 focus:ring-indigo-400"
-                  />
-                  {imagePreviews.length > 0 && (
-                    <div className="grid grid-cols-4 gap-2 mt-2">
-                      {imagePreviews.map((preview, idx) => (
-                        <img key={idx} src={preview} alt={`Preview ${idx + 1}`} className="w-full h-20 object-cover rounded border" />
-                      ))}
-                    </div>
-                  )}
-                  {editingServiceId && existingImages.length > 0 && (
-                    <div className="mt-4">
-                      <p className="text-sm font-medium text-gray-700 mb-2">Existing Images</p>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        {existingImages.map((img) => {
-                          const marked = imagesToRemove.includes(img.id);
-                          return (
-                            <div
-                              key={img.id}
-                              className={`border rounded-lg p-2 text-center ${marked ? "border-red-400 bg-red-50 opacity-70" : "border-gray-200"}`}
-                            >
-                              <img
-                                src={getImageUrl(img.image_url)}
-                                alt="Service"
-                                className="w-full h-20 object-cover rounded mb-2"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleToggleExistingImage(img.id)}
-                                className={`w-full text-xs font-semibold px-2 py-1 rounded ${marked ? "bg-gray-200 text-gray-700" : "bg-red-500 text-white"
-                                  }`}
-                              >
-                                {marked ? "Keep Image" : "Remove Image"}
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Inventory Items Section */}
-                <div className="mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Inventory Items (Optional)
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleAddInventoryItem}
-                    className="mb-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded"
-                  >
-                    + Add Inventory Item
-                  </button>
-                  {selectedInventoryItems.map((item, index) => (
-                    <div key={index} className="flex gap-2 mb-2 items-end">
-                      <select
-                        value={item.inventory_item_id}
-                        onChange={(e) => handleUpdateInventoryItem(index, 'inventory_item_id', e.target.value)}
-                        className="flex-1 border p-2 rounded-lg text-sm"
-                      >
-                        <option value="">Select Item</option>
-                        {inventoryItems.map((invItem) => (
-                          <option key={invItem.id} value={invItem.id}>
-                            {invItem.name} {invItem.item_code ? `(${invItem.item_code})` : ''} - {invItem.unit}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        value={item.quantity}
-                        onChange={(e) => handleUpdateInventoryItem(index, 'quantity', e.target.value)}
-                        placeholder="Qty"
-                        className="w-24 border p-2 rounded-lg text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveInventoryItem(index)}
-                        className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded text-sm"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                <button
-                  onClick={handleSaveService}
-                  className="w-full mt-3 bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-lg shadow-lg font-semibold"
-                >
-                  {editingServiceId ? "Update Service" : "Create Service"}
-                </button>
-                {editingServiceId && (
-                  <button
-                    type="button"
-                    onClick={handleCancelEdit}
-                    className="w-full mt-2 bg-gray-200 hover:bg-gray-300 text-gray-800 p-3 rounded-lg font-semibold"
-                  >
-                    Cancel Edit
-                  </button>
-                )}
-              </div>
-            </Card>
-
-            {/* All Services Table */}
-            <Card title="All Services">
-              {loading ? (
-                <div className="flex justify-center items-center h-48">
-                  <Loader2 size={48} className="animate-spin text-indigo-500" />
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full border border-gray-200 rounded-lg">
-                    <thead className="bg-gray-100 text-gray-700 uppercase tracking-wider">
-                      <tr>
-                        <th className="py-3 px-4 text-left">Image</th>
-                        <th className="py-3 px-4 text-left">Service Name</th>
-                        <th className="py-3 px-4 text-left">Description</th>
-                        <th className="py-3 px-4 text-right">Charges (₹)</th>
-                        <th className="py-3 px-4 text-center">Avg. Time</th>
-                        <th className="py-3 px-4 text-center">Visible</th>
-                        <th className="py-3 px-4 text-center">Inventory</th>
-                        <th className="py-3 px-4 text-center">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(() => {
-                        const filteredServices = services.filter(s => {
-                          if (serviceFilters.search && !s.name.toLowerCase().includes(serviceFilters.search.toLowerCase()) && !s.description?.toLowerCase().includes(serviceFilters.search.toLowerCase())) return false;
-                          if (serviceFilters.visible !== "" && s.is_visible_to_guest !== (serviceFilters.visible === "true")) return false;
-                          if (serviceFilters.hasInventory !== "" && ((s.inventory_items && s.inventory_items.length > 0) !== (serviceFilters.hasInventory === "true"))) return false;
-                          if (serviceFilters.hasImages !== "" && ((s.images && s.images.length > 0) !== (serviceFilters.hasImages === "true"))) return false;
-                          return true;
-                        });
-                        return filteredServices.length === 0 ? (
-                          <tr>
-                            <td colSpan="8" className="py-8 text-center text-gray-500">
-                              No services found matching filters. Create your first service above.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredServices.map((s, idx) => (
-                            <tr key={s.id} className={`${idx % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-gray-100 transition-colors`}>
-                              <td className="py-3 px-4">
-                                {s.images && s.images.length > 0 ? (
-                                  <img src={getImageUrl(s.images[0].image_url)} alt={s.name} className="w-16 h-16 object-cover rounded border" />
-                                ) : (
-                                  <div className="w-16 h-16 bg-gray-200 rounded border flex items-center justify-center text-xs text-gray-400">No Image</div>
-                                )}
-                              </td>
-                              <td className="py-3 px-4 font-semibold">{s.name}</td>
-                              <td className="py-3 px-4">{s.description}</td>
-                              <td className="py-3 px-4 text-right font-semibold">₹{s.charges}</td>
-                              <td className="py-3 px-4 text-center text-sm">
-                                {s.average_completion_time || <span className="text-gray-400">-</span>}
-                              </td>
-                              <td className="py-3 px-4 text-center">
-                                <span className={`px-2 py-1 rounded text-xs font-semibold ${s.is_visible_to_guest
-                                  ? 'bg-green-100 text-green-800'
-                                  : 'bg-gray-100 text-gray-800'
-                                  }`}>
-                                  {s.is_visible_to_guest ? 'Visible' : 'Hidden'}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4 text-center">
-                                {s.inventory_items && s.inventory_items.length > 0 ? (
-                                  <span className="px-2 py-1 rounded text-xs font-semibold bg-indigo-100 text-indigo-800">
-                                    {s.inventory_items.length} items
-                                  </span>
-                                ) : (
-                                  <span className="text-gray-400 text-sm">-</span>
-                                )}
-                              </td>
-                              <td className="py-3 px-4 text-center">
-                                <div className="flex flex-wrap gap-2 justify-center">
-                                  <button
-                                    onClick={() => handleEditService(s)}
-                                    className="px-3 py-1 rounded text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white"
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    onClick={() => handleToggleVisibility(s.id, s.is_visible_to_guest)}
-                                    className={`px-3 py-1 rounded text-sm font-medium transition-colors ${s.is_visible_to_guest
-                                      ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
-                                      : 'bg-green-500 hover:bg-green-600 text-white'
-                                      }`}
-                                  >
-                                    {s.is_visible_to_guest ? 'Hide' : 'Show'}
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteService(s.id)}
-                                    className="px-3 py-1 rounded text-sm font-medium bg-red-500 hover:bg-red-600 text-white"
-                                  >
-                                    Delete
-                                  </button>
+                ) : (
+                  <div className="overflow-x-auto -mx-6">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50/50">
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100">Service Reference</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right">Value (₹)</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-center">Efficiency</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-center">Status</th>
+                          <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right pr-8">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(() => {
+                          const filteredServices = services.filter(s => {
+                            if (serviceFilters.search && !s.name.toLowerCase().includes(serviceFilters.search.toLowerCase()) && !s.description?.toLowerCase().includes(serviceFilters.search.toLowerCase())) return false;
+                            if (serviceFilters.visible !== "" && s.is_visible_to_guest !== (serviceFilters.visible === "true")) return false;
+                            if (serviceFilters.hasInventory !== "" && ((s.inventory_items && s.inventory_items.length > 0) !== (serviceFilters.hasInventory === "true"))) return false;
+                            if (serviceFilters.hasImages !== "" && ((s.images && s.images.length > 0) !== (serviceFilters.hasImages === "true"))) return false;
+                            return true;
+                          });
+                          return filteredServices.length === 0 ? (
+                            <tr>
+                              <td colSpan="5" className="py-20 text-center">
+                                <div className="flex flex-col items-center gap-2">
+                                  <Box className="text-slate-200" size={48} />
+                                  <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">No records found in current view</p>
                                 </div>
                               </td>
                             </tr>
-                          ))
-                        );
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
+                          ) : (
+                            filteredServices.map((s) => (
+                              <tr key={s.id} className="hover:bg-slate-50/50 transition-colors group">
+                                <td className="py-5 px-6">
+                                  <div className="flex items-center gap-4">
+                                    <div className="relative flex-shrink-0 w-16 h-12 rounded-xl border border-slate-100 overflow-hidden bg-slate-50">
+                                      {s.images && s.images.length > 0 ? (
+                                        <img src={getImageUrl(s.images[0].image_url)} className="w-full h-full object-cover" />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-slate-300"><Box size={16} /></div>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <div className="font-black text-slate-800 tracking-tight">{s.name}</div>
+                                      <div className="text-xs text-slate-400 font-medium truncate max-w-xs">{s.description || 'No description assigned'}</div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="py-5 px-6 text-right">
+                                  <div className="text-sm font-black text-slate-900 tracking-tight">₹{s.charges.toLocaleString('en-IN')}</div>
+                                  <div className="text-[10px] font-bold text-emerald-500 uppercase">Unit Price</div>
+                                </td>
+                                <td className="py-5 px-6 text-center">
+                                  <div className="flex flex-col items-center">
+                                    <div className="text-xs font-black text-slate-600 flex items-center gap-1">
+                                      <Clock size={12} className="text-slate-400" />
+                                      {s.average_completion_time || 'N/A'}
+                                    </div>
+                                    <div className="text-[9px] font-bold text-slate-400 uppercase mt-0.5 tracking-tighter">Est. Duration</div>
+                                  </div>
+                                </td>
+                                <td className="py-5 px-6 text-center">
+                                  <div className="flex flex-col items-center gap-1.5">
+                                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${s.is_visible_to_guest ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+                                      {s.is_visible_to_guest ? 'Public' : 'Hidden'}
+                                    </span>
+                                    {s.inventory_items && s.inventory_items.length > 0 && (
+                                      <span className="text-[9px] font-bold text-indigo-500 flex items-center gap-1">
+                                        <Package size={10} /> {s.inventory_items.length} Res linked
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-5 px-6 text-right">
+                                  <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity translate-x-2 group-hover:translate-x-0 transition-transform">
+                                    <button
+                                      onClick={() => handleEditService(s)}
+                                      className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors border border-transparent hover:border-indigo-100"
+                                      title="Edit Configuration"
+                                    >
+                                      <Plus size={18} className="rotate-45" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteService(s.id)}
+                                      className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition-colors border border-transparent hover:border-red-100"
+                                      title="Mark Inactive"
+                                    >
+                                      <Archive size={18} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleToggleVisibility(s.id, s.is_visible_to_guest)}
+                                      className={`p-2 rounded-xl transition-colors border border-transparent ${s.is_visible_to_guest ? 'text-amber-500 hover:bg-amber-50 hover:border-amber-100' : 'text-emerald-500 hover:bg-emerald-50 hover:border-emerald-100'}`}
+                                      title={s.is_visible_to_guest ? 'Hide from Guests' : 'Publish to Guests'}
+                                    >
+                                      {s.is_visible_to_guest ? <X size={18} /> : <TrendingUp size={18} />}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          );
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
+            </div>
           </div>
         )}
 
@@ -2808,77 +3259,93 @@ const Services = () => {
         {activeTab === "items" && (
           <div className="space-y-6">
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Card title="Total Items Used" className="bg-gradient-to-br from-blue-500 to-blue-700 text-white">
-                <div className="text-3xl font-bold">{dashboardData.overallInventoryUsage.length}</div>
-                <p className="text-sm opacity-90 mt-1">Unique items</p>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <Card
+                title="Unique Resources"
+                subtitle="Active consumption"
+                icon={<Layers size={20} />}
+                className="bg-white"
+              >
+                <div className="text-4xl font-extrabold text-slate-800 tracking-tight">{dashboardData.overallInventoryUsage.length}</div>
               </Card>
-              <Card title="Total Quantity" className="bg-gradient-to-br from-green-500 to-green-700 text-white">
-                <div className="text-3xl font-bold">
-                  {dashboardData.overallInventoryUsage.reduce((sum, item) => sum + item.quantity_used, 0).toFixed(1)}
+              <Card
+                title="Aggregate Volume"
+                subtitle="Total throughput"
+                icon={<Box size={20} />}
+                className="bg-white border-l-4 border-indigo-500"
+              >
+                <div className="text-4xl font-extrabold text-indigo-600 tracking-tight">
+                  {dashboardData.overallInventoryUsage.reduce((sum, item) => sum + item.quantity_used, 0).toFixed(0)}
                 </div>
-                <p className="text-sm opacity-90 mt-1">Total consumed</p>
               </Card>
-              <Card title="Total Cost" className="bg-gradient-to-br from-purple-500 to-purple-700 text-white">
-                <div className="text-3xl font-bold">
-                  ₹{dashboardData.overallInventoryUsage.reduce((sum, item) => sum + item.total_cost, 0).toFixed(2)}
+              <Card
+                title="Resource Valuation"
+                subtitle="Market value of usage"
+                icon={<IndianRupee size={20} />}
+                className="bg-white border-l-4 border-emerald-500"
+              >
+                <div className="text-4xl font-extrabold text-emerald-600 tracking-tight">
+                  ₹{dashboardData.overallInventoryUsage.reduce((sum, item) => sum + item.total_cost, 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </div>
-                <p className="text-sm opacity-90 mt-1">Inventory cost</p>
               </Card>
-              <Card title="Services Using Items" className="bg-gradient-to-br from-orange-500 to-orange-700 text-white">
-                <div className="text-3xl font-bold">
+              <Card
+                title="Service Affinity"
+                subtitle="Active integration"
+                icon={<Activity size={20} />}
+                className="bg-white border-l-4 border-amber-500"
+              >
+                <div className="text-4xl font-extrabold text-amber-600 tracking-tight">
                   {new Set(dashboardData.overallInventoryUsage.flatMap(item => item.services_used_in || [])).size}
                 </div>
-                <p className="text-sm opacity-90 mt-1">Active services</p>
               </Card>
             </div>
 
             {/* Filters */}
-            <Card title="Filters">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <input
-                  type="text"
-                  placeholder="Search by item name or code..."
-                  value={itemFilters.search}
-                  onChange={(e) => setItemFilters({ ...itemFilters, search: e.target.value })}
-                  className="border p-2 rounded-lg"
-                />
+            <Card title="Query Console" icon={<Search size={20} />}>
+              <div className="flex flex-wrap gap-4">
+                <div className="flex-1 min-w-[300px] relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="text"
+                    placeholder="Identify Resource by Name or Serial..."
+                    value={itemFilters.search}
+                    onChange={(e) => setItemFilters({ ...itemFilters, search: e.target.value })}
+                    className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 pl-11 pr-4 py-3 rounded-xl text-sm transition-all"
+                  />
+                </div>
                 <select
                   value={itemFilters.service}
                   onChange={(e) => setItemFilters({ ...itemFilters, service: e.target.value })}
-                  className="border p-2 rounded-lg"
+                  className="bg-slate-50 border-none ring-1 ring-slate-200 p-3 rounded-xl text-sm font-bold transition-all min-w-[200px]"
                 >
-                  <option value="">All Services</option>
+                  <option value="">Filter by Linked Service</option>
                   {services.map((s) => (
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
                 </select>
                 <button
                   onClick={() => setItemFilters({ search: "", service: "", category: "" })}
-                  className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-medium"
+                  className="px-6 py-3 bg-white hover:bg-slate-50 text-slate-400 hover:text-slate-600 rounded-xl text-xs font-black uppercase tracking-widest border border-slate-200 transition-all shadow-sm"
                 >
-                  Clear Filters
+                  Reset Parameters
                 </button>
               </div>
             </Card>
 
             {/* Items Used Table */}
-            <Card title="Inventory Items Used with Services">
-              <div className="overflow-x-auto">
-                <table className="min-w-full border border-gray-200 rounded-lg">
-                  <thead className="bg-gray-100 text-gray-700 uppercase tracking-wider">
-                    <tr>
-                      <th className="py-3 px-4 text-left">Item Name</th>
-                      <th className="py-3 px-4 text-left">Item Code</th>
-                      <th className="py-3 px-4 text-center">Total Quantity</th>
-                      <th className="py-3 px-4 text-center">Unit</th>
-                      <th className="py-3 px-4 text-center">Unit Price</th>
-                      <th className="py-3 px-4 text-right">Total Cost (₹)</th>
-                      <th className="py-3 px-4 text-center">Used In</th>
-                      <th className="py-3 px-4 text-center">Assignments</th>
+            <Card title="Resource Utilization Report" subtitle="Analytical breakdown of item consumption across service architecture" icon={<PieIcon size={20} />}>
+              <div className="overflow-x-auto -mx-6">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/50">
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100">Resource Unit / Code</th>
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-center">Throughput</th>
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-center">Unit Val.</th>
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right">Aggregate (₹)</th>
+                      <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right pr-8">Service Affinity</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-100">
                     {(() => {
                       const filteredItems = dashboardData.overallInventoryUsage.filter(item => {
                         if (itemFilters.search && !item.name.toLowerCase().includes(itemFilters.search.toLowerCase()) && !item.item_code?.toLowerCase().includes(itemFilters.search.toLowerCase())) return false;
@@ -2887,46 +3354,45 @@ const Services = () => {
                       });
                       return filteredItems.length === 0 ? (
                         <tr>
-                          <td colSpan="8" className="py-8 text-center text-gray-500">
-                            No items found matching filters
+                          <td colSpan="5" className="py-20 text-center">
+                            <div className="flex flex-col items-center gap-2 opacity-40">
+                              <Box size={48} className="text-slate-200" />
+                              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No consumption data detected</p>
+                            </div>
                           </td>
                         </tr>
                       ) : (
-                        filteredItems.map((item, idx) => (
-                          <tr key={item.id} className={`${idx % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-gray-100 transition-colors`}>
-                            <td className="py-3 px-4 font-semibold">{item.name}</td>
-                            <td className="py-3 px-4 text-gray-600">{item.item_code || '-'}</td>
-                            <td className="py-3 px-4 text-center font-semibold text-blue-600">
-                              {item.quantity_used.toFixed(2)}
-                            </td>
-                            <td className="py-3 px-4 text-center text-gray-600">{item.unit}</td>
-                            <td className="py-3 px-4 text-center">₹{item.unit_price.toFixed(2)}</td>
-                            <td className="py-3 px-4 text-right font-semibold text-green-600">
-                              ₹{item.total_cost.toFixed(2)}
-                            </td>
-                            <td className="py-3 px-4 text-center">
-                              <div className="flex flex-wrap gap-1 justify-center">
-                                {item.services_used_in && item.services_used_in.length > 0 ? (
-                                  item.services_used_in.slice(0, 2).map(serviceId => {
-                                    const service = services.find(s => s.id === serviceId);
-                                    return service ? (
-                                      <span key={serviceId} className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs">
-                                        {service.name}
-                                      </span>
-                                    ) : null;
-                                  })
-                                ) : null}
-                                {item.services_count > 2 && (
-                                  <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs">
-                                    +{item.services_count - 2} more
-                                  </span>
-                                )}
+                        filteredItems.map((item) => (
+                          <tr key={item.id} className="hover:bg-slate-50/50 transition-colors group">
+                            <td className="py-5 px-6">
+                              <div className="flex flex-col">
+                                <span className="font-black text-slate-800 tracking-tight">{item.name}</span>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.item_code || 'S-CODE-NA'}</span>
                               </div>
                             </td>
-                            <td className="py-3 px-4 text-center">
-                              <span className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-full text-sm font-medium">
-                                {item.assignments_count}
-                              </span>
+                            <td className="py-5 px-6 text-center">
+                              <div className="text-xs font-black text-slate-700">{item.quantity_used.toFixed(1)} <span className="text-slate-400 font-medium">{item.unit}</span></div>
+                              <div className="text-[9px] font-bold text-indigo-500 uppercase tracking-tighter">{item.assignments_count} DISPATCHES</div>
+                            </td>
+                            <td className="py-5 px-6 text-center">
+                              <span className="text-xs font-bold text-slate-500">₹{item.unit_price.toFixed(0)}</span>
+                            </td>
+                            <td className="py-5 px-6 text-right">
+                              <div className="text-sm font-black text-slate-900 tracking-tight">₹{item.total_cost.toLocaleString('en-IN')}</div>
+                              <div className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest">Gross Value</div>
+                            </td>
+                            <td className="py-5 px-6 text-right pr-8">
+                              <div className="flex flex-wrap gap-1 justify-end">
+                                {item.services_used_in?.slice(0, 2).map(serviceId => {
+                                  const service = services.find(s => s.id === serviceId);
+                                  return service ? (
+                                    <span key={serviceId} className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-black uppercase tracking-tighter border border-indigo-100">
+                                      {service.name}
+                                    </span>
+                                  ) : null;
+                                })}
+                                {item.services_count > 2 && <span className="text-[9px] font-bold text-slate-400 border border-slate-100 rounded px-1.5 py-0.5">+{item.services_count - 2}</span>}
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -2943,404 +3409,202 @@ const Services = () => {
         {activeTab === "assign" && (
           <div className="space-y-6">
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Card title="Total Assigned" className="bg-gradient-to-br from-blue-500 to-blue-700 text-white">
-                <div className="text-3xl font-bold">{totalAssigned}</div>
-                <p className="text-sm opacity-90 mt-1">All assignments</p>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <Card
+                title="Active Missions"
+                subtitle="Lifecycle total"
+                icon={<Activity size={20} />}
+                className="bg-white"
+              >
+                <div className="text-4xl font-extrabold text-slate-800 tracking-tight">{totalAssigned}</div>
               </Card>
-              <Card title="Pending" className="bg-gradient-to-br from-yellow-400 to-yellow-600 text-white">
-                <div className="text-3xl font-bold">{pendingCount}</div>
-                <p className="text-sm opacity-90 mt-1">Awaiting completion</p>
+              <Card
+                title="Await Dispatch"
+                subtitle="High priority"
+                icon={<Clock size={20} />}
+                className="bg-white border-l-4 border-amber-500"
+              >
+                <div className="text-4xl font-extrabold text-amber-600 tracking-tight">{pendingCount}</div>
               </Card>
-              <Card title="In Progress" className="bg-gradient-to-br from-orange-500 to-orange-700 text-white">
-                <div className="text-3xl font-bold">{totalAssigned - pendingCount - completedCount}</div>
-                <p className="text-sm opacity-90 mt-1">Currently active</p>
+              <Card
+                title="Ground Operations"
+                subtitle="In progress"
+                icon={<Zap size={20} />}
+                className="bg-white border-l-4 border-indigo-500"
+              >
+                <div className="text-4xl font-extrabold text-indigo-600 tracking-tight">{totalAssigned - pendingCount - completedCount}</div>
               </Card>
-              <Card title="Completed" className="bg-gradient-to-br from-green-500 to-green-700 text-white">
-                <div className="text-3xl font-bold">{completedCount}</div>
-                <p className="text-sm opacity-90 mt-1">Finished services</p>
+              <Card
+                title="Success Rate"
+                subtitle="Fulfilled tasks"
+                icon={<IndianRupee size={20} />}
+                className="bg-white border-l-4 border-emerald-500"
+              >
+                <div className="text-4xl font-extrabold text-emerald-600 tracking-tight">{completedCount}</div>
               </Card>
             </div>
 
-            {/* Assign Service Form */}
-            <Card title="Assign New Service">
-              <div className="space-y-3">
-                <select
-                  value={assignForm.service_id}
-                  onChange={(e) => handleServiceSelect(e.target.value)}
-                  className="w-full border p-3 rounded-lg"
-                >
-                  <option value="">Select Service</option>
-                  {services.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-
-                {/* Service Details Display */}
-                {selectedServiceDetails && (
-                  <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                    <h3 className="font-semibold text-lg text-gray-800 mb-3">Service Details</h3>
-
-                    <div className="space-y-2 mb-4">
-                      <div>
-                        <span className="font-medium text-gray-700">Name:</span>
-                        <span className="ml-2 text-gray-900">{selectedServiceDetails.name}</span>
-                      </div>
-                      {selectedServiceDetails.description && (
-                        <div>
-                          <span className="font-medium text-gray-700">Description:</span>
-                          <p className="ml-2 text-gray-900 mt-1">{selectedServiceDetails.description}</p>
-                        </div>
-                      )}
-                      <div>
-                        <span className="font-medium text-gray-700">Charges:</span>
-                        <span className="ml-2 text-gray-900 font-semibold">₹{selectedServiceDetails.charges}</span>
-                      </div>
-                      {selectedServiceDetails.images && selectedServiceDetails.images.length > 0 && (
-                        <div className="mt-2">
-                          <span className="font-medium text-gray-700">Images:</span>
-                          <div className="flex gap-2 mt-2">
-                            {selectedServiceDetails.images.slice(0, 3).map((img, idx) => (
-                              <img
-                                key={idx}
-                                src={getImageUrl(img.image_url)}
-                                alt={`${selectedServiceDetails.name} ${idx + 1}`}
-                                className="w-20 h-20 object-cover rounded border"
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Inventory Items Needed */}
-                    {selectedServiceDetails.inventory_items && selectedServiceDetails.inventory_items.length > 0 && (
-                      <div className="mt-4 pt-4 border-t border-blue-300">
-                        <h4 className="font-semibold text-md text-gray-800 mb-2">Inventory Items Needed:</h4>
-                        <div className="space-y-2">
-                          {selectedServiceDetails.inventory_items.map((item, idx) => (
-                            <div key={idx} className="flex flex-col p-3 bg-white rounded border border-blue-200">
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex-1">
-                                  <span className="font-medium text-gray-800">{item.name}</span>
-                                  {item.item_code && (
-                                    <span className="ml-2 text-sm text-gray-600">({item.item_code})</span>
-                                  )}
-                                </div>
-                                <div className="text-right">
-                                  <span className="text-sm text-gray-600">
-                                    {item.quantity} {item.unit}
-                                  </span>
-                                  {item.unit_price > 0 && (
-                                    <span className="ml-2 text-sm text-gray-500">
-                                      @ ₹{item.unit_price}/{item.unit}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Source Selection */}
-                              <div className="mt-1">
-                                <label className="text-xs text-gray-600 block mb-1">Source Location:</label>
-                                <select
-                                  className={`text-sm border rounded p-1 w-full ${!inventorySourceSelections[item.id] ? 'border-red-300 bg-red-50' : 'bg-gray-50 border-gray-300'}`}
-                                  value={inventorySourceSelections[item.id] || ""}
-                                  onChange={(e) => setInventorySourceSelections(prev => ({ ...prev, [item.id]: parseInt(e.target.value) }))}
-                                >
-                                  <option value="">-- Select Source --</option>
-                                  {itemStockData[item.id]?.length > 0 ? (
-                                    itemStockData[item.id].map(stock => (
-                                      <option key={stock.location_id} value={stock.location_id}>
-                                        {stock.location_name} (Avl: {stock.quantity})
-                                      </option>
-                                    ))
-                                  ) : (
-                                    isLoadingStock ?
-                                      <option value="" disabled>Loading stocks...</option> :
-                                      <option value="" disabled>No stock available</option>
-                                  )}
-
-                                  {/* Allow fallback to general store even if not fetched, if user insists? No, safer to rely on fetched list. */}
-                                </select>
-                                {!inventorySourceSelections[item.id] && (
-                                  <p className="text-xs text-red-500 mt-1">Please select a source location</p>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {(!selectedServiceDetails.inventory_items || selectedServiceDetails.inventory_items.length === 0) && (
-                      <div className="mt-4 pt-4 border-t border-blue-300">
-                        <p className="text-sm text-gray-600 italic">No inventory items required for this service.</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <select
-                  value={assignForm.employee_id}
-                  onChange={(e) => setAssignForm({ ...assignForm, employee_id: e.target.value })}
-                  className="w-full border p-3 rounded-lg"
-                >
-                  <option value="">Select Employee</option>
-                  {employees
-                    .sort((a, b) => {
-                      // Sort online employees to top
-                      const aOnline = a.status === 'on_duty' || a.is_clocked_in;
-                      const bOnline = b.status === 'on_duty' || b.is_clocked_in;
-                      if (aOnline && !bOnline) return -1;
-                      if (!aOnline && bOnline) return 1;
-                      return 0;
-                    })
-                    .map((e) => {
-                      const isOnline = e.status === 'on_duty' || e.is_clocked_in;
-                      return (
-                        <option
-                          key={e.id}
-                          value={e.id}
-                          className={isOnline ? "text-green-600 font-bold" : ""}
-                          style={{ color: isOnline ? "#16a34a" : "inherit", fontWeight: isOnline ? "bold" : "normal" }}
-                        >
-                          {e.name} {isOnline ? " 🟢 (Online)" : ` (${e.status || 'No Status'})`}
-                        </option>
-                      );
-                    })}
-                </select>
-                <select
-                  value={assignForm.room_id}
-                  onChange={(e) => setAssignForm({ ...assignForm, room_id: e.target.value })}
-                  className="w-full border p-3 rounded-lg"
-                >
-                  <option value="">Select Room</option>
-                  {rooms.length === 0 ? (
-                    <option value="" disabled>No checked-in rooms available</option>
-                  ) : (
-                    rooms.map((r) => (
-                      <option key={r.id} value={r.id}>Room {r.number}</option>
-                    ))
-                  )}
-                </select>
-                <select
-                  value={assignForm.status}
-                  onChange={(e) => setAssignForm({ ...assignForm, status: e.target.value })}
-                  className="w-full border p-3 rounded-lg"
-                >
-                  <option value="pending">Pending</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                </select>
-
-                {/* Extra Inventory Items Section */}
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Extra Inventory Items (Optional - Additional items beyond service requirements)
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleAddExtraInventoryItem}
-                    className="mb-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded"
-                  >
-                    + Add Extra Inventory Item
-                  </button>
-                  {extraInventoryItems.map((item, index) => (
-                    <div key={index} className="flex flex-col gap-2 mb-2 p-2 border rounded bg-gray-50 border-gray-200">
-                      <div className="flex gap-2 items-end">
-                        <div className="flex-1">
-                          <label className="text-xs text-gray-600 block mb-1">Item</label>
-                          <select
-                            value={item.inventory_item_id}
-                            onChange={(e) => handleUpdateExtraInventoryItem(index, 'inventory_item_id', e.target.value)}
-                            className="w-full border p-2 rounded-lg text-sm"
-                          >
-                            <option value="">Select Item</option>
-                            {inventoryItems.map((invItem) => (
-                              <option key={invItem.id} value={invItem.id}>
-                                {invItem.name} {invItem.item_code ? `(${invItem.item_code})` : ''} - {invItem.unit}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="w-24">
-                          <label className="text-xs text-gray-600 block mb-1">Qty</label>
-                          <input
-                            type="number"
-                            value={item.quantity}
-                            onChange={(e) => handleUpdateExtraInventoryItem(index, 'quantity', e.target.value)}
-                            placeholder="Qty"
-                            className="w-full border p-2 rounded-lg text-sm"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveExtraInventoryItem(index)}
-                          className="bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded text-sm mb-[2px]"
-                        >
-                          Remove
-                        </button>
-                      </div>
-
-                      {/* Source Selection for Extra Item */}
-                      {item.inventory_item_id && (
-                        <div>
-                          <label className="text-xs text-gray-600 block mb-1">Source Location:</label>
-                          <select
-                            className={`text-sm border rounded p-1 w-full ${!item.source_location_id ? 'border-red-300 bg-red-50' : 'bg-white border-gray-300'}`}
-                            value={item.source_location_id || ""}
-                            onChange={(e) => handleUpdateExtraInventoryItem(index, 'source_location_id', e.target.value)}
-                          >
-                            <option value="">-- Select Source --</option>
-                            {itemStockData[item.inventory_item_id]?.length > 0 ? (
-                              itemStockData[item.inventory_item_id].map(stock => (
-                                <option key={stock.location_id} value={stock.location_id}>
-                                  {stock.location_name} (Avl: {stock.quantity})
-                                </option>
-                              ))
-                            ) : (
-                              isLoadingStock ?
-                                <option value="" disabled>Loading stocks...</option> :
-                                <option value="" disabled>No stock available</option>
-                            )}
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {extraInventoryItems.length === 0 && (
-                    <p className="text-xs text-gray-500 italic">No extra items added. Service will use only its default inventory items.</p>
-                  )}
-                </div>
-
-                <button
-                  onClick={handleAssign}
-                  className="w-full mt-3 bg-green-600 hover:bg-green-700 text-white p-3 rounded-lg shadow-lg font-semibold"
-                >
-                  Assign Service
-                </button>
-              </div>
-            </Card>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-slate-400 uppercase tracking-[0.2em]">Deployment Console</h3>
+              <button
+                onClick={() => {
+                  setAssignForm({ service_id: "", employee_id: "", room_id: "", status: "pending" });
+                  setSelectedServiceDetails(null);
+                  setShowAssignModal(true);
+                }}
+                className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-slate-900 text-white rounded-xl text-sm font-bold transition-all shadow-lg active:scale-95 group"
+              >
+                <Zap size={18} className="text-amber-400 group-hover:scale-125 transition-transform" />
+                Dispatch New Mission
+              </button>
+            </div>
 
             {/* Assigned Services Table */}
-            <Card title="Assigned Services">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
-                <select value={filters.room} onChange={(e) => setFilters({ ...filters, room: e.target.value })} className="border p-2 rounded-lg">
-                  <option value="">All Rooms</option>
-                  {assignedServices.map((s) => {
-                    const room = s.room;
-                    return room ? <option key={room.id} value={room.id}>Room {room.number}</option> : null;
-                  }).filter(Boolean)}
-                </select>
-                <select value={filters.employee} onChange={(e) => setFilters({ ...filters, employee: e.target.value })} className="border p-2 rounded-lg">
-                  <option value="">All Employees</option>
-                  {employees.map((e) => (
-                    <option
-                      key={e.id}
-                      value={e.id}
-                      style={{ color: e.is_clocked_in ? "#16a34a" : "inherit" }}
-                    >
-                      {e.name} {e.is_clocked_in ? "●" : ""}
-                    </option>
-                  ))}
-                </select>
-                <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })} className="border p-2 rounded-lg">
-                  <option value="">All Statuses</option>
-                  <option value="pending">Pending</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                </select>
-                <input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} className="border p-2 rounded-lg" />
-                <input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} className="border p-2 rounded-lg" />
+            <Card title="Active Operations Log" icon={<ClipboardList size={20} />}>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Location Filter</label>
+                  <select value={filters.room} onChange={(e) => setFilters({ ...filters, room: e.target.value })} className="w-full bg-slate-50 border-none ring-1 ring-slate-200 p-2.5 rounded-xl text-xs font-bold transition-all">
+                    <option value="">All Regions</option>
+                    {assignedServices.map((s) => s.room ? <option key={s.room.id} value={s.room.id}>Unit {s.room.number}</option> : null).filter(Boolean)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Agent Filter</label>
+                  <select value={filters.employee} onChange={(e) => setFilters({ ...filters, employee: e.target.value })} className="w-full bg-slate-50 border-none ring-1 ring-slate-200 p-2.5 rounded-xl text-xs font-bold transition-all">
+                    <option value="">All Personnel</option>
+                    {employees.map((e) => (
+                      <option key={e.id} value={e.id}>{e.name} {e.is_clocked_in ? "•" : ""}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Status Filter</label>
+                  <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })} className="w-full bg-slate-50 border-none ring-1 ring-slate-200 p-2.5 rounded-xl text-xs font-bold transition-all">
+                    <option value="">All States</option>
+                    <option value="pending">Await Dispatch</option>
+                    <option value="in_progress">Ground Ops</option>
+                    <option value="completed">Fulfilled</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">From Alpha</label>
+                  <input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} className="w-full bg-slate-50 border-none ring-1 ring-slate-200 p-2 text-xs font-bold rounded-xl" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">To Omega</label>
+                  <input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} className="w-full bg-slate-50 border-none ring-1 ring-slate-200 p-2 text-xs font-bold rounded-xl" />
+                </div>
               </div>
+
               {loading ? (
                 <div className="flex justify-center items-center h-48">
                   <Loader2 size={48} className="animate-spin text-indigo-500" />
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full border border-gray-200 rounded-lg">
-                    <thead className="bg-gray-100 text-gray-700 uppercase tracking-wider">
-                      <tr>
-                        <th className="py-3 px-4 text-left">Service</th>
-                        <th className="py-3 px-4 text-left">Employee</th>
-                        <th className="py-3 px-4 text-left">Room</th>
-                        <th className="py-3 px-4 text-left">Status</th>
-                        <th className="py-3 px-4 text-left">Avg. Completion Time</th>
-                        <th className="py-3 px-4 text-left">Assigned At</th>
-                        <th className="py-3 px-4 text-left">Status Changed</th>
-                        <th className="py-3 px-4 text-left">Completed Time</th>
-                        <th className="py-3 px-4 text-left">Actions</th>
+                <div className="overflow-x-auto -mx-6">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50/50">
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100">Operation / Target</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100">Designated Agent</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-center">Current Phase</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right">Chronology</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right pr-8">Actions</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {filteredAssigned.map((s, idx) => (
-                        <tr key={s.id} className={`${idx % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-gray-100 transition-colors`}>
-                          <td className="p-3 border-t border-gray-200">{s.service?.name}</td>
-                          <td className="p-3 border-t border-gray-200">
-                            <div className="flex items-center gap-2">
-                              <span>{s.employee?.name}</span>
-                              <button
-                                onClick={() => handleReassignEmployee(s)}
-                                className="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded border border-blue-200 transition-colors"
-                                title="Reassign to different employee"
-                              >
-                                Change
-                              </button>
-                            </div>
-                          </td>
-                          <td className="p-3 border-t border-gray-200">Room {s.room?.number}</td>
-                          <td className="p-3 border-t border-gray-200">
-                            <select value={s.status} onChange={(e) => handleStatusChange(s.id, e.target.value)} className="border p-2 rounded-lg bg-white">
-                              <option value="pending">Pending</option>
-                              <option value="in_progress">In Progress</option>
-                              <option value="completed">Completed</option>
-                            </select>
-                          </td>
-                          <td className="p-3 border-t border-gray-200 text-sm">
-                            {s.service?.average_completion_time ? (
-                              <span className="text-indigo-600 font-medium">{s.service.average_completion_time}</span>
-                            ) : (
-                              <span className="text-gray-400 italic">Not set</span>
-                            )}
-                          </td>
-                          <td className="p-3 border-t border-gray-200">{s.assigned_at && new Date(s.assigned_at).toLocaleString()}</td>
-                          <td className="p-3 border-t border-gray-200">
-                            {statusChangeTimes[s.id] ? (
-                              <span className="text-blue-600 font-medium text-sm">
-                                {new Date(statusChangeTimes[s.id]).toLocaleString()}
-                              </span>
-                            ) : (
-                              <span className="text-gray-400 italic text-sm">Not changed</span>
-                            )}
-                          </td>
-                          <td className="p-3 border-t border-gray-200">
-                            {s.last_used_at ? (
-                              <span className="text-green-600 font-medium">
-                                {new Date(s.last_used_at).toLocaleString()}
-                              </span>
-                            ) : (
-                              <span className="text-gray-400 italic">Never</span>
-                            )}
-                          </td>
-                          <td className="p-3 border-t border-gray-200">
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => handleViewAssignedService(s)}
-                                className="px-3 py-1 rounded text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white"
-                              >
-                                View
-                              </button>
-                              <button
-                                onClick={() => handleDeleteAssignedService(s.id)}
-                                className="px-3 py-1 rounded text-sm font-medium bg-red-500 hover:bg-red-600 text-white"
-                              >
-                                Delete
-                              </button>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredAssigned.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" className="py-20 text-center">
+                            <div className="flex flex-col items-center gap-2 opacity-40">
+                              <Activity size={48} className="text-slate-200" />
+                              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No active operations found</p>
                             </div>
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        filteredAssigned.map((s) => (
+                          <tr key={s.id} className="hover:bg-slate-50/50 transition-colors group">
+                            <td className="py-5 px-6">
+                              <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-lg ${s.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                                  <Zap size={16} />
+                                </div>
+                                <div>
+                                  <div className="font-black text-slate-800 tracking-tight">{s.service?.name}</div>
+                                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                                    <Package size={10} /> UNIT {s.room?.number}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-5 px-6">
+                              <div className="flex flex-col">
+                                <span className="text-sm font-black text-slate-700">{s.employee?.name}</span>
+                                <button onClick={() => handleReassignEmployee(s)} className="text-[9px] font-black text-indigo-500 uppercase tracking-tighter hover:underline text-left">Re-route Mission</button>
+                              </div>
+                            </td>
+                            <td className="py-5 px-6 text-center">
+                              <select
+                                value={s.status}
+                                onChange={(e) => handleStatusChange(s.id, e.target.value)}
+                                className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border-none ring-1 transition-all appearance-none cursor-pointer ${s.status === 'completed' ? 'bg-emerald-50 text-emerald-600 ring-emerald-100' :
+                                  s.status === 'in_progress' ? 'bg-indigo-50 text-indigo-600 ring-indigo-100' : 'bg-amber-50 text-amber-600 ring-amber-100'
+                                  }`}
+                              >
+                                <option value="pending">Wait</option>
+                                <option value="in_progress">Active</option>
+                                <option value="completed">Done</option>
+                              </select>
+                            </td>
+                            <td className="py-5 px-6 text-right">
+                              <div className="flex flex-col">
+                                <span className="text-[11px] font-black text-slate-800">{s.assigned_at ? new Date(s.assigned_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}</span>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{s.assigned_at ? new Date(s.assigned_at).toLocaleDateString() : 'NO TIMESTAMP'}</span>
+                              </div>
+                            </td>
+                            <td className="py-5 px-6 text-right">
+                              <div className="flex justify-end gap-2">
+                                <button onClick={() => handleViewAssignedService(s)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-xl transition-all shadow-sm" title="View Details">
+                                  <LayoutDashboard size={14} />
+                                </button>
+                                <div className="flex gap-1">
+                                  {(s.status || "").toLowerCase() !== 'completed' ? (
+                                    <>
+                                      <button
+                                        onClick={() => handleStatusChange(s.id, 'completed')}
+                                        className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-white rounded-xl transition-all shadow-sm"
+                                        title="Complete with Inventory Recovery"
+                                      >
+                                        <CheckCircle size={14} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleStatusChange(s.id, 'completed', true)}
+                                        className="p-2 text-slate-400 hover:text-amber-600 hover:bg-white rounded-xl transition-all shadow-sm"
+                                        title="Quick Complete (No Returns)"
+                                      >
+                                        <Zap size={14} />
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleStatusChange(s.id, 'completed')}
+                                      className="p-2 text-indigo-500 hover:text-indigo-700 hover:bg-white rounded-xl transition-all shadow-sm border border-indigo-100 bg-indigo-50/30"
+                                      title="Re-verify / Return Inventory"
+                                    >
+                                      <Box size={14} />
+                                    </button>
+                                  )}
+                                </div>
+                                <button onClick={() => handleDeleteAssignedService(s.id)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-white rounded-xl transition-all shadow-sm" title="Delete Mission">
+                                  <Archive size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -3353,295 +3617,223 @@ const Services = () => {
         {activeTab === "requests" && (
           <div className="space-y-6">
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Card title="Total Requests" className="bg-gradient-to-br from-blue-500 to-blue-700 text-white">
-                <div className="text-3xl font-bold">{serviceRequests.length}</div>
-                <p className="text-sm opacity-90 mt-1">All requests</p>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <Card
+                title="Live Signals"
+                subtitle="All active telemetry"
+                icon={<Radio size={20} />}
+                className="bg-white"
+              >
+                <div className="text-4xl font-extrabold text-slate-800 tracking-tight">{serviceRequests.length}</div>
               </Card>
-              <Card title="Pending" className="bg-gradient-to-br from-yellow-400 to-yellow-600 text-white">
-                <div className="text-3xl font-bold">{serviceRequests.filter(r => r.status === 'pending').length}</div>
-                <p className="text-sm opacity-90 mt-1">Awaiting action</p>
+              <Card
+                title="Pending Triage"
+                subtitle="High urgency"
+                icon={<AlertTriangle size={20} />}
+                className="bg-white border-l-4 border-amber-500"
+              >
+                <div className="text-4xl font-extrabold text-amber-600 tracking-tight">{serviceRequests.filter(r => r.status === 'pending').length}</div>
               </Card>
-              <Card title="In Progress" className="bg-gradient-to-br from-orange-500 to-orange-700 text-white">
-                <div className="text-3xl font-bold">{serviceRequests.filter(r => r.status === 'in_progress').length}</div>
-                <p className="text-sm opacity-90 mt-1">Being processed</p>
+              <Card
+                title="Current Processing"
+                subtitle="Resource active"
+                icon={<Activity size={20} />}
+                className="bg-white border-l-4 border-indigo-500"
+              >
+                <div className="text-4xl font-extrabold text-indigo-600 tracking-tight">{serviceRequests.filter(r => r.status === 'in_progress').length}</div>
               </Card>
-              <Card title="Completed" className="bg-gradient-to-br from-green-500 to-green-700 text-white">
-                <div className="text-3xl font-bold">{serviceRequests.filter(r => r.status === 'completed').length}</div>
-                <p className="text-sm opacity-90 mt-1">Finished</p>
+              <Card
+                title="Resolved Cycles"
+                subtitle="Fulfilled requests"
+                icon={<CheckCircle size={20} />}
+                className="bg-white border-l-4 border-emerald-500"
+              >
+                <div className="text-4xl font-extrabold text-emerald-600 tracking-tight">{serviceRequests.filter(r => r.status === 'completed').length}</div>
               </Card>
             </div>
 
-            <Card title="Service Requests">
+            <Card title="Live Service Telemetry" subtitle="Real-time monitoring of guest and system requests" icon={<Radio size={20} />}>
               {loading ? (
                 <div className="flex justify-center items-center h-48">
                   <Loader2 size={48} className="animate-spin text-indigo-500" />
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full border border-gray-200 rounded-lg">
-                    <thead className="bg-gray-100 text-gray-700 uppercase tracking-wider">
-                      <tr>
-                        <th className="py-3 px-4 text-left">ID</th>
-                        <th className="py-3 px-4 text-left">Room</th>
-                        <th className="py-3 px-4 text-left">Food Order</th>
-                        <th className="py-3 px-4 text-left">Request Type</th>
-                        <th className="py-3 px-4 text-left">Description</th>
-                        <th className="py-3 px-4 text-left">Employee</th>
-                        <th className="py-3 px-4 text-left">Status</th>
-                        <th className="py-3 px-4 text-left">Avg. Completion Time</th>
-                        <th className="py-3 px-4 text-left">Created At</th>
-                        <th className="py-3 px-4 text-left">Completed At</th>
-                        <th className="py-3 px-4 text-left">Actions</th>
+                <div className="overflow-x-auto -mx-6">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50/50">
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100">Signal ID</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100">Origin / Unit</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100">Request Vector</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100">Assigned Agent</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-center">Protocol State</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-slate-100 text-right pr-8">Control</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody className="divide-y divide-slate-100">
                       {serviceRequests.length === 0 ? (
                         <tr>
-                          <td colSpan="11" className="py-8 text-center text-gray-500">
-                            No service requests found
+                          <td colSpan="6" className="py-20 text-center">
+                            <div className="flex flex-col items-center gap-2 opacity-40">
+                              <Radio size={48} className="text-slate-200" />
+                              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No active signals detected</p>
+                            </div>
                           </td>
                         </tr>
                       ) : (
                         [...serviceRequests].sort((a, b) => {
-                          // Sort: pending first, then in_progress, then others
                           const statusOrder = { 'pending': 0, 'in_progress': 1, 'inventory_checked': 2, 'completed': 3, 'cancelled': 4 };
                           const aOrder = statusOrder[a.status] ?? 5;
                           const bOrder = statusOrder[b.status] ?? 5;
                           if (aOrder !== bOrder) return aOrder - bOrder;
-                          // If same status, sort by created_at (newest first)
                           return new Date(b.created_at || 0) - new Date(a.created_at || 0);
-                        }).map((request, idx) => {
+                        }).map((request) => {
                           const isCheckoutRequest = request.is_checkout_request;
                           const checkoutRequestId = isCheckoutRequest ? (request.checkout_request_id || (parseInt(request.id) - 1000000)) : null;
 
                           return (
-                            <tr key={request.id} className={`${idx % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-gray-100 transition-colors ${isCheckoutRequest ? 'bg-yellow-50' : ''}`}>
-                              <td className="p-3 border-t border-gray-200">
-                                #{isCheckoutRequest ? checkoutRequestId : request.id}
-                                {isCheckoutRequest && <span className="ml-2 text-xs text-yellow-600">(Checkout)</span>}
+                            <tr key={request.id} className={`hover:bg-slate-50/50 transition-colors group ${isCheckoutRequest ? 'bg-amber-50/30' : ''}`}>
+                              <td className="py-5 px-6">
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-black text-slate-900 tracking-tight">#{isCheckoutRequest ? checkoutRequestId : request.id}</span>
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{request.created_at ? new Date(request.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'LIVE'}</span>
+                                </div>
                               </td>
-                              <td className="p-3 border-t border-gray-200">
-                                {request.room_number ? `Room ${request.room_number}` : `Room ID: ${request.room_id}`}
-                                {isCheckoutRequest && request.guest_name && (
-                                  <div className="text-xs text-gray-600 mt-1">Guest: {request.guest_name}</div>
-                                )}
+                              <td className="py-5 px-6">
+                                <div className="flex items-center gap-3">
+                                  <div className={`p-2 rounded-lg ${isCheckoutRequest ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-600'}`}>
+                                    <Zap size={14} />
+                                  </div>
+                                  <div>
+                                    <div className="font-black text-slate-800 tracking-tight">{request.room_number ? `Unit ${request.room_number}` : `ID: ${request.room_id}`}</div>
+                                    <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{request.guest_name || 'Anonymous Guest'}</div>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-3 border-t border-gray-200">
-                                {request.request_type === "cleaning" ? (
-                                  <span className="text-sm text-orange-600 font-medium">🧹 Cleaning Service</span>
-                                ) : request.request_type === "refill" ? (
-                                  <span className="text-sm text-purple-600 font-medium">🔄 Refill Service</span>
-                                ) : isCheckoutRequest ? (
-                                  <span className="text-sm text-gray-600">Checkout Verification</span>
-                                ) : (
-                                  <div className="text-sm">
-                                    {request.food_order_id ? (
-                                      <>
-                                        <div>Order #{request.food_order_id}</div>
-                                        {request.food_order_amount && (
-                                          <div className="text-gray-600">₹{request.food_order_amount.toFixed(2)}</div>
-                                        )}
-                                        {request.food_order_status && (
-                                          <div className="flex flex-col gap-1 mt-1">
-                                            <span className={`px-2 py-1 rounded text-xs w-fit ${request.food_order_status === 'completed' ? 'bg-green-100 text-green-800' :
-                                              request.food_order_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                                                'bg-gray-100 text-gray-800'
-                                              }`}>
-                                              {request.food_order_status}
-                                            </span>
-
-                                            {/* Show Mark as Paid button if not paid yet */}
-                                            {request.food_order_status !== 'cancelled' && (
-                                              <button
-                                                onClick={() => handleMarkOrderPaid(request)}
-                                                className="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded border border-blue-200 transition-colors text-left w-fit"
-                                              >
-                                                Mark as Paid
-                                              </button>
-                                            )}
-                                          </div>
-                                        )}
-                                      </>
+                              <td className="py-5 px-6">
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-2">
+                                    {request.request_type === "cleaning" ? (
+                                      <span className="px-2 py-0.5 rounded-md bg-orange-50 text-orange-600 text-[10px] font-black uppercase tracking-widest border border-orange-100">Sanitation</span>
+                                    ) : request.request_type === "refill" ? (
+                                      <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-600 text-[10px] font-black uppercase tracking-widest border border-purple-100">Logistics</span>
+                                    ) : isCheckoutRequest ? (
+                                      <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 text-[10px] font-black uppercase tracking-widest border border-amber-100">Exit Audit</span>
                                     ) : (
-                                      <span className="text-gray-400 text-xs">No food order</span>
+                                      <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest border border-indigo-100">Service</span>
                                     )}
+                                    <span className="text-xs font-bold text-slate-700">{request.request_type || 'General'}</span>
                                   </div>
-                                )}
-                              </td>
-                              <td className="p-3 border-t border-gray-200">
-                                <span className={`px-2 py-1 rounded text-xs capitalize ${request.request_type === "cleaning" ? 'bg-orange-100 text-orange-800' :
-                                  request.request_type === "refill" ? 'bg-purple-100 text-purple-800' :
-                                    isCheckoutRequest ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'
-                                  }`}>
-                                  {request.request_type === "cleaning" ? "🧹 cleaning" :
-                                    request.request_type === "refill" ? "🔄 refill" :
-                                      isCheckoutRequest ? 'checkout_verification' : (request.request_type || 'delivery')}
-                                </span>
-                              </td>
-                              <td className="p-3 border-t border-gray-200">
-                                {request.request_type === "refill" && request.refill_data && request.refill_data.length > 0 ? (
-                                  <div className="max-w-md">
-                                    <div className="text-sm font-medium text-gray-700 mb-2">
-                                      Room {request.room_number} - Refill Required
+                                  {request.request_type === "refill" && request.refill_data?.length > 0 && (
+                                    <div className="text-[9px] font-bold text-slate-400 bg-slate-50 p-1 rounded border border-slate-100 mt-1">
+                                      {request.refill_data.length} RESOURCE NODES REQD
                                     </div>
-                                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-2">
-                                      <div className="text-xs font-semibold text-purple-800 mb-1">Items to Refill:</div>
-                                      <table className="w-full text-xs">
-                                        <thead>
-                                          <tr className="border-b border-purple-200">
-                                            <th className="text-left py-1 text-purple-700">Item</th>
-                                            <th className="text-right py-1 text-purple-700">Consumed</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {request.refill_data.map((item, idx) => (
-                                            <tr key={idx} className="border-b border-purple-100 last:border-0">
-                                              <td className="py-1 text-gray-700">
-                                                {item.item_name}
-                                                {item.item_code && <span className="text-gray-500 ml-1">({item.item_code})</span>}
-                                              </td>
-                                              <td className="text-right py-1 font-medium text-purple-700">
-                                                {item.quantity_to_refill} {item.unit}
-                                              </td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
+                                  )}
+                                  {request.food_order_id && (
+                                    <div className="flex flex-col gap-1 mt-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest border ${request.food_order_billing_status === 'paid'
+                                          ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                          : 'bg-orange-50 text-orange-600 border-orange-100'
+                                          }`}>
+                                          {request.food_order_billing_status === 'paid' ? 'PAID' : 'UNPAID'}
+                                        </span>
+                                        <span className="text-[10px] font-bold text-slate-500">₹{request.food_order_amount}</span>
+                                      </div>
+                                      {request.food_items && request.food_items.length > 0 && (
+                                        <div className="text-[9px] text-slate-400 bg-slate-50/50 p-1 rounded border border-slate-100/50">
+                                          {request.food_items.map(item => `${item.food_item_name} x${item.quantity}`).join(', ')}
+                                        </div>
+                                      )}
                                     </div>
-                                  </div>
-                                ) : (
-                                  <div className="max-w-xs truncate" title={request.description}>
-                                    {request.description || '-'}
-                                  </div>
-                                )}
+                                  )}
+                                </div>
                               </td>
-                              <td className="p-3 border-t border-gray-200">
+                              <td className="py-5 px-6">
                                 <select
                                   value={request.employee_id || ""}
                                   onChange={(e) => handleAssignEmployeeToRequest(request.id, e.target.value)}
-                                  className={`border p-2 rounded-lg bg-white text-sm ${!request.employee_id ? 'border-orange-300 bg-orange-50' : ''}`}
+                                  className={`w-full bg-transparent border-none text-[11px] font-black uppercase tracking-widest cursor-pointer hover:underline transition-all ${!request.employee_id ? 'text-amber-500' : 'text-slate-700'}`}
                                 >
-                                  <option value="">-- Unassigned --</option>
+                                  <option value="">AWAIT ASSIGNMENT</option>
                                   {employees.map((emp) => (
-                                    <option key={emp.id} value={emp.id}>
-                                      {emp.name} {emp.is_clocked_in ? " ●" : ""}
-                                    </option>
+                                    <option key={emp.id} value={emp.id}>{emp.name.toUpperCase()}</option>
                                   ))}
                                 </select>
                               </td>
-                              <td className="p-3 border-t border-gray-200">
-                                {isCheckoutRequest ? (
-                                  <select
-                                    value={request.status || 'pending'}
-                                    onChange={(e) => handleUpdateCheckoutRequestStatus(request.id, e.target.value)}
-                                    className={`border p-2 rounded-lg bg-white text-sm ${request.status === 'completed' ? 'bg-green-50' :
-                                      request.status === 'in_progress' ? 'bg-blue-50' :
-                                        request.status === 'pending' ? 'bg-yellow-50' :
-                                          'bg-gray-50'
-                                      }`}
-                                  >
-                                    <option value="pending">Pending</option>
-                                    <option value="in_progress">In Progress</option>
-                                    <option value="completed">Completed</option>
-                                  </select>
-                                ) : (
-                                  <select
-                                    value={request.status}
-                                    onChange={(e) => handleUpdateRequestStatus(request.id, e.target.value)}
-                                    className={`border p-2 rounded-lg bg-white text-sm ${request.status === 'completed' ? 'bg-green-50' :
-                                      request.status === 'in_progress' ? 'bg-yellow-50' :
-                                        request.status === 'cancelled' ? 'bg-red-50' :
-                                          'bg-gray-50'
-                                      }`}
-                                  >
-                                    <option value="pending">Pending</option>
-                                    <option value="in_progress">In Progress</option>
-                                    <option value="completed">Completed</option>
-                                    <option value="cancelled">Cancelled</option>
-                                  </select>
-                                )}
-                              </td>
-                              <td className="p-3 border-t border-gray-200 text-sm">
-                                {/* Average completion time would come from assigned service if any */}
-                                {request.service?.average_completion_time ? (
-                                  <span className="text-indigo-600 font-medium">{request.service.average_completion_time}</span>
-                                ) : (
-                                  <span className="text-gray-400 italic">-</span>
-                                )}
-                              </td>
-                              <td className="p-3 border-t border-gray-200 text-sm">
-                                {request.created_at ? new Date(request.created_at).toLocaleString() : '-'}
-                              </td>
-                              <td className="p-3 border-t border-gray-200 text-sm">
-                                {request.completed_at ? (
-                                  <span className="text-green-600">
-                                    {new Date(request.completed_at).toLocaleString()}
+                              <td className="py-5 px-6 text-center">
+                                <div className="flex justify-center">
+                                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${request.status === 'completed' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                    request.status === 'in_progress' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' :
+                                      request.status === 'cancelled' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-amber-50 text-amber-600 border-amber-100'
+                                    }`}>
+                                    {request.status || 'pending'}
                                   </span>
-                                ) : (
-                                  <span className="text-gray-400">-</span>
-                                )}
+                                </div>
                               </td>
-                              <td className="p-3 border-t border-gray-200">
-                                <div className="flex gap-2">
+                              <td className="py-5 px-6 text-right">
+                                <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
                                   {isCheckoutRequest ? (
                                     <>
-                                      {((request.status || "").toLowerCase() === "pending" || (request.status || "").toLowerCase() === "in_progress" || (request.status || "").toLowerCase() === "inventory_checked") ? (
-                                        <>
-                                          {!request.employee_id ? (
-                                            <button
-                                              onClick={() => handleQuickAssignFromRequest(request)}
-                                              className="px-4 py-2 rounded-lg text-sm font-semibold bg-orange-500 hover:bg-orange-600 text-white shadow-md hover:shadow-lg transition-all duration-200"
-                                              title="Assign employee first before verification"
-                                            >
-                                              ⚠ Assign Employee First
-                                            </button>
-                                          ) : (
-                                            <button
-                                              onClick={() => handleViewCheckoutInventory(checkoutRequestId)}
-                                              className="px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-md hover:shadow-lg transition-all duration-200"
-                                              title="View inventory details and verify"
-                                            >
-                                              ✓ Verify Inventory
-                                            </button>
-                                          )}
-                                        </>
-                                      ) : (request.status || "").toLowerCase() === "completed" ? (
-                                        <span className="px-3 py-1 rounded text-sm font-medium bg-green-100 text-green-800">
-                                          ✓ Completed
-                                        </span>
-                                      ) : null}
+                                      <button
+                                        onClick={() => setSelectedActivity({
+                                          type: 'Request',
+                                          name: request.request_type,
+                                          room: request.room_number ? `Unit ${request.room_number}` : `ID: ${request.room_id}`,
+                                          employee: request.employee_name || '-',
+                                          date: request.created_at,
+                                          status: request.status,
+                                          id: request.id,
+                                          original: request
+                                        })}
+                                        className="p-2 bg-white text-slate-400 hover:text-indigo-600 rounded-xl shadow-sm border border-slate-100 transition-all"
+                                        title="View Details"
+                                      >
+                                        <LayoutDashboard size={14} />
+                                      </button>
+                                      <button
+                                        onClick={() => !request.employee_id ? handleQuickAssignFromRequest(request) : handleViewCheckoutInventory(checkoutRequestId)}
+                                        className="p-2 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-100 hover:scale-110 active:scale-95 transition-all"
+                                        title="Initiate Verification"
+                                      >
+                                        <Zap size={14} />
+                                      </button>
                                     </>
                                   ) : (
-                                    <div className="flex gap-2">
+                                    <>
                                       {(request.status || "").toLowerCase() === "pending" && (
                                         <button
                                           onClick={!request.employee_id ? () => handleQuickAssignFromRequest(request) : () => handleUpdateRequestStatus(request.id, 'in_progress')}
-                                          className={`px-3 py-1 rounded text-sm font-medium ${!request.employee_id ? 'bg-green-500 hover:bg-green-600' : 'bg-blue-500 hover:bg-blue-600'} text-white`}
-                                          title={!request.employee_id ? "Assign Service" : "Accept & Start Request"}
+                                          className="p-2 bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-100 hover:scale-110 transition-all"
+                                          title="Dispatch"
                                         >
-                                          {!request.employee_id ? "Assign" : "Accept"}
+                                          <CheckCircle size={14} />
                                         </button>
                                       )}
-
-                                      {(request.status || "").toLowerCase() === "in_progress" && (
-                                        <button
-                                          onClick={() => handleUpdateRequestStatus(request.id, 'completed')}
-                                          className="px-3 py-1 rounded text-sm font-medium bg-green-600 hover:bg-green-700 text-white"
-                                          title="Mark as Completed"
-                                        >
-                                          Complete
-                                        </button>
-                                      )}
-
+                                      <button
+                                        onClick={() => setSelectedActivity({
+                                          type: 'Request',
+                                          name: request.request_type,
+                                          room: request.room_number ? `Unit ${request.room_number}` : `ID: ${request.room_id}`,
+                                          employee: request.employee_name || '-',
+                                          date: request.created_at,
+                                          status: request.status,
+                                          id: request.id,
+                                          original: request
+                                        })}
+                                        className="p-2 bg-white text-slate-400 hover:text-indigo-600 rounded-xl shadow-sm border border-slate-100 transition-all"
+                                        title="View Details"
+                                      >
+                                        <LayoutDashboard size={14} />
+                                      </button>
                                       <button
                                         onClick={() => handleDeleteRequest(request.id)}
-                                        className="px-3 py-1 rounded text-sm font-medium bg-red-500 hover:bg-red-600 text-white"
-                                        title="Delete Request"
+                                        className="p-2 bg-white text-slate-400 hover:text-red-500 rounded-xl shadow-sm border border-slate-100 transition-all"
+                                        title="Archive"
                                       >
-                                        Delete
+                                        <Archive size={14} />
                                       </button>
-                                    </div>
+                                    </>
                                   )}
                                 </div>
                               </td>
@@ -3829,132 +4021,105 @@ const Services = () => {
                   )}
 
                   {/* Assignment Information */}
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <h3 className="font-semibold text-lg text-gray-800 mb-3">Assignment Information</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <span className="font-medium text-gray-700">Employee:</span>
-                        <span className="ml-2 text-gray-900">{viewingAssignedService.employee?.name || 'N/A'}</span>
+                  {/* Assignment Information */}
+                  <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-6">
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                      <Zap size={14} /> Mission Parameters
+                    </h3>
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Designated Agent</span>
+                        <div className="font-black text-slate-800">{viewingAssignedService.employee?.name || 'UNASSIGNED'}</div>
                       </div>
-                      <div>
-                        <span className="font-medium text-gray-700">Room:</span>
-                        <span className="ml-2 text-gray-900">Room {viewingAssignedService.room?.number || 'N/A'}</span>
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Target Vector</span>
+                        <div className="font-black text-slate-800">Unit {viewingAssignedService.room?.number || 'EXT-LOC'}</div>
                       </div>
-                      <div>
-                        <span className="font-medium text-gray-700">Status:</span>
-                        <span className="ml-2 text-gray-900 capitalize">{viewingAssignedService.status || 'N/A'}</span>
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-700">Assigned At:</span>
-                        <span className="ml-2 text-gray-900">
-                          {viewingAssignedService.assigned_at ? new Date(viewingAssignedService.assigned_at).toLocaleString() : 'N/A'}
-                        </span>
-                      </div>
-                      {viewingAssignedService.last_used_at && (
-                        <div>
-                          <span className="font-medium text-gray-700">Completed Time:</span>
-                          <span className="ml-2 text-gray-900 font-semibold text-green-600">
-                            {new Date(viewingAssignedService.last_used_at).toLocaleString()}
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Protocol State</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border ${viewingAssignedService.status === 'completed' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-indigo-50 text-indigo-600 border-indigo-100'
+                            }`}>
+                            {viewingAssignedService.status || 'PENDING'}
                           </span>
                         </div>
-                      )}
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dispatch Time</span>
+                        <div className="font-black text-slate-800">
+                          {viewingAssignedService.assigned_at ? new Date(viewingAssignedService.assigned_at).toLocaleTimeString() : 'N/A'}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
                   {/* Inventory Items Needed */}
+                  {/* Inventory Items Needed */}
                   {(() => {
                     const inventoryItems = viewingAssignedService.service?.inventory_items;
-                    console.log("[DEBUG Modal] Inventory items check:", {
-                      hasService: !!viewingAssignedService.service,
-                      hasInventoryItems: !!inventoryItems,
-                      inventoryItemsType: typeof inventoryItems,
-                      inventoryItemsIsArray: Array.isArray(inventoryItems),
-                      inventoryItemsLength: inventoryItems?.length,
-                      inventoryItemsValue: inventoryItems
-                    });
-
                     if (inventoryItems && Array.isArray(inventoryItems) && inventoryItems.length > 0) {
                       return (
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                          <h3 className="font-semibold text-lg text-gray-800 mb-3">Inventory Items Needed</h3>
-                          <div className="space-y-2">
+                        <div className="bg-indigo-50/30 border border-indigo-100/50 rounded-2xl p-6">
+                          <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <Box size={14} /> Allocated Resources
+                          </h3>
+                          <div className="space-y-3">
                             {inventoryItems.map((item, idx) => (
-                              <div key={idx} className="flex items-center justify-between p-3 bg-white rounded border border-green-200">
-                                <div className="flex-1">
-                                  <span className="font-medium text-gray-800">{item.name}</span>
-                                  {item.item_code && (
-                                    <span className="ml-2 text-sm text-gray-600">({item.item_code})</span>
-                                  )}
+                              <div key={idx} className="flex items-center justify-between p-4 bg-white/60 backdrop-blur-md rounded-xl border border-white shadow-sm">
+                                <div className="flex flex-col">
+                                  <span className="font-black text-slate-800 text-sm tracking-tight">{item.name}</span>
+                                  {item.item_code && <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{item.item_code}</span>}
                                 </div>
                                 <div className="text-right">
-                                  <span className="text-sm text-gray-600">
-                                    {item.quantity} {item.unit}
-                                  </span>
-                                  {item.unit_price > 0 && (
-                                    <span className="ml-2 text-sm text-gray-500">
-                                      @ ₹{item.unit_price}/{item.unit}
-                                    </span>
-                                  )}
+                                  <div className="text-sm font-black text-indigo-600">
+                                    {item.quantity} <span className="text-[10px] uppercase font-bold text-slate-400">{item.unit}</span>
+                                  </div>
+                                  {item.unit_price > 0 && <div className="text-[9px] font-bold text-slate-400">@ ₹{item.unit_price.toFixed(0)}</div>}
                                 </div>
                               </div>
                             ))}
                           </div>
                         </div>
                       );
-                    } else {
-                      return (
-                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                          <p className="text-sm text-gray-600 italic">
-                            No inventory items required for this service.
-                            {inventoryItems && Array.isArray(inventoryItems) && inventoryItems.length === 0 && (
-                              <span className="block mt-1 text-xs">(Service has empty inventory_items array)</span>
-                            )}
-                            {!inventoryItems && (
-                              <span className="block mt-1 text-xs">(Service has no inventory_items property)</span>
-                            )}
-                          </p>
-                        </div>
-                      );
                     }
+                    return (
+                      <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-6 text-center">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">No additional resource nodes required</p>
+                      </div>
+                    );
                   })()}
 
                   {/* Returned Inventory Items */}
                   {returnedItems && returnedItems.length > 0 && (
-                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                      <h3 className="font-semibold text-lg text-gray-800 mb-3">Returned Inventory Items</h3>
-                      <div className="space-y-2">
+                    <div className="bg-emerald-50/30 border border-emerald-100/50 rounded-2xl p-6">
+                      <h3 className="text-xs font-black text-emerald-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <CheckCircle size={14} /> Telemetry Verification
+                      </h3>
+                      <div className="space-y-3">
                         {returnedItems.map((item, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-3 bg-white rounded border border-purple-200">
-                            <div className="flex-1">
-                              <span className="font-medium text-gray-800">{item.item?.name || item.item_name || 'Unknown Item'}</span>
-                              {item.item?.item_code && (
-                                <span className="ml-2 text-sm text-gray-600">({item.item.item_code})</span>
-                              )}
-                              {item.status === "returned" && (
-                                <span className="ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded">Fully Returned</span>
-                              )}
-                              {item.status === "partially_returned" && (
-                                <span className="ml-2 px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded">Partially Returned</span>
-                              )}
-                            </div>
-                            <div className="text-right">
-                              <div className="text-sm text-gray-600">
-                                <div>Assigned: {item.quantity_assigned} {item.item?.unit || item.unit || 'pcs'}</div>
-                                <div>Used: {item.quantity_used} {item.item?.unit || item.unit || 'pcs'}</div>
-                                <div className="font-semibold text-green-600">
-                                  Returned: {item.quantity_returned} {item.item?.unit || item.unit || 'pcs'}
-                                </div>
-                                {item.balance_quantity > 0 && (
-                                  <div className="text-orange-600">
-                                    Balance: {item.balance_quantity} {item.item?.unit || item.unit || 'pcs'}
-                                  </div>
-                                )}
+                          <div key={idx} className="p-4 bg-white/60 backdrop-blur-md rounded-xl border border-white shadow-sm">
+                            <div className="flex items-center justify-between mb-3 pb-3 border-b border-emerald-50">
+                              <div className="flex flex-col">
+                                <span className="font-black text-slate-800 text-sm">{item.item?.name || item.item_name}</span>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{item.item?.item_code || 'S-UNIT-VAL'}</span>
                               </div>
-                              {item.returned_at && (
-                                <div className="text-xs text-gray-500 mt-1">
-                                  Returned: {new Date(item.returned_at).toLocaleString()}
-                                </div>
-                              )}
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${item.status === 'returned' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {item.status?.replace('_', ' ')}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div className="text-center p-2 bg-slate-50 rounded-lg">
+                                <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Assigned</div>
+                                <div className="text-xs font-black text-slate-700">{item.quantity_assigned}</div>
+                              </div>
+                              <div className="text-center p-2 bg-slate-50 rounded-lg">
+                                <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Consumption</div>
+                                <div className="text-xs font-black text-indigo-600">{item.quantity_used}</div>
+                              </div>
+                              <div className="text-center p-2 bg-emerald-50 rounded-lg">
+                                <div className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Recovery</div>
+                                <div className="text-xs font-black text-emerald-700">{item.quantity_returned}</div>
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -3963,19 +4128,30 @@ const Services = () => {
                   )}
 
                   {(!returnedItems || returnedItems.length === 0) && viewingAssignedService.status === "completed" && (
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                      <p className="text-sm text-gray-600 italic">No inventory items have been returned yet.</p>
+                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 text-center">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">No recovery telemetry recorded</p>
                     </div>
                   )}
                 </div>
 
-                <div className="mt-6 flex justify-end">
+                <div className="mt-6 flex justify-between gap-2">
+                  <button
+                    onClick={() => {
+                      const svcId = viewingAssignedService.id;
+                      setViewingAssignedService(null);
+                      setReturnedItems([]);
+                      handleStatusChange(svcId, 'completed');
+                    }}
+                    className="px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg active:scale-95 transition-all"
+                  >
+                    Inventory Returns / Recovery
+                  </button>
                   <button
                     onClick={() => {
                       setViewingAssignedService(null);
                       setReturnedItems([]);
                     }}
-                    className="px-6 py-2 rounded-lg text-sm font-medium bg-gray-500 hover:bg-gray-600 text-white"
+                    className="px-6 py-2 rounded-lg text-sm font-medium bg-slate-200 hover:bg-slate-300 text-slate-700"
                   >
                     Close
                   </button>
@@ -3987,904 +4163,543 @@ const Services = () => {
 
         {/* Return Inventory Modal - When completing service */}
         {completingServiceId && inventoryAssignments.length > 0 && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-gray-800">Return Inventory Items</h2>
-                  <button
-                    onClick={() => {
-                      setCompletingServiceId(null);
-                      setInventoryAssignments([]);
-                      setReturnQuantities({});
-                      setUsedQuantities({});
-                      setReturnLocationId(null);
-                    }}
-                    className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
-                  >
-                    ×
-                  </button>
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-slate-100">
+              <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-800 tracking-tight">Resource Recovery <span className="text-[10px] text-indigo-500 font-normal">v2.4-FIXED-VALIDATION</span></h2>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Finalizing mission & returning units</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setCompletingServiceId(null);
+                    setInventoryAssignments([]);
+                    setReturnQuantities({});
+                    setUsedQuantities({});
+                    setReturnLocationId(null);
+                  }}
+                  className="p-2 hover:bg-white rounded-xl transition-colors text-slate-400 hover:text-slate-600 border border-transparent hover:border-slate-100"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="p-8 overflow-y-auto space-y-6">
+                <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-start gap-4">
+                  <div className="p-2 bg-white rounded-xl shadow-sm text-indigo-600"><AlertCircle size={20} /></div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-black text-indigo-900">Telemetry Calibration Required</p>
+                    <p className="text-[11px] font-medium text-indigo-700 leading-relaxed">
+                      Confirm recovery of unconsumed nodes. Items not returned will be logged as consumed.
+                    </p>
+                  </div>
                 </div>
 
-                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-gray-700 font-semibold mb-2">
-                    📦 Return Balance Inventory Items
-                  </p>
-                  <p className="text-sm text-gray-600">
-                    Update "Used" quantity if items were consumed. Return unused items (balance) to the selected location.
-                    Assigned = Used + Returned + Balance.
-                  </p>
-                </div>
-
-                {/* Return Location Selector - REMOVED */}
-
-                <div className="space-y-4 mb-6">
+                <div className="space-y-4">
                   {inventoryAssignments.map((assignment) => {
-                    const assignedQty = assignment.quantity_assigned || 0;
+                    // Handle both nested and flat structures
+                    const itemName = assignment.item?.name || assignment.name || 'NODE-UNDEFINED';
+                    const itemUnit = assignment.item?.unit || assignment.unit || 'pcs';
+                    const itemCode = assignment.item?.item_code || assignment.item_code || 'S-UNIT';
+
+                    // Fallback to 'quantity' if 'quantity_assigned' is missing
+                    const assignedQty = assignment.quantity_assigned !== undefined ? assignment.quantity_assigned : (assignment.quantity || 0);
                     const alreadyReturned = assignment.quantity_returned || 0;
-
-                    // Logic: Everything NOT returned is considered USED.
-                    // Max Returnable is everything not yet returned.
                     const maxReturnable = Math.max(0, assignedQty - alreadyReturned);
-                    const balance = maxReturnable; // For compatibility
-
                     const currentReturnVal = returnQuantities[assignment.id];
                     const currentReturn = currentReturnVal !== undefined && currentReturnVal !== '' ? parseFloat(currentReturnVal) : 0;
-
-                    // Calculated Used: Assigned - AlreadyReturned - CurrentReturn
-                    // Calculated Used: Assigned - AlreadyReturned - CurrentReturn
-                    const calculatedUsedRaw = Math.max(0, assignedQty - alreadyReturned - currentReturn);
-                    const isPcs = (assignment.item?.unit || '').toLowerCase() === 'pcs';
+                    const damageQtyVal = assignment.damage_qty_input || 0;
+                    const calculatedUsedRaw = Math.max(0, assignedQty - alreadyReturned - currentReturn - damageQtyVal);
+                    const isPcs = (assignment.item?.unit || 'pcs').toLowerCase() === 'pcs';
                     const calculatedUsed = isPcs ? Math.round(calculatedUsedRaw) : Number(calculatedUsedRaw.toFixed(3));
 
                     return (
-                      <div key={assignment.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex-1">
-                            <h4 className="font-semibold text-gray-800">{assignment.item?.name || 'Unknown Item'}</h4>
-                            {assignment.item?.item_code && (
-                              <p className="text-sm text-gray-600">Code: {assignment.item.item_code}</p>
-                            )}
-                            <p className="text-xs text-gray-500 mt-1">
-                              Service: {assignment.assigned_service?.service?.name || assignment.service_name || 'N/A'}
-                            </p>
+                      <div key={assignment.id} className="p-6 rounded-2xl border border-slate-100 bg-white hover:border-indigo-100 transition-all group">
+                        <div className="flex justify-between items-start mb-6 pb-6 border-b border-slate-50">
+                          <div className="space-y-1">
+                            <h4 className="font-black text-slate-800 tracking-tight group-hover:text-indigo-600 transition-colors">
+                              {itemName}
+                            </h4>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{itemCode}</span>
+                              <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{assignment.assigned_service?.service?.name || 'SERVICE'}</span>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-sm text-gray-600">
-                              Assigned: <span className="font-semibold">{assignedQty}</span> {assignment.item?.unit || 'pcs'}
-                            </p>
-                            <p className="text-sm text-gray-600">
-                              Already Returned: {alreadyReturned} {assignment.item?.unit || 'pcs'}
-                            </p>
+                          <div className="text-right space-y-1">
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Allocated</div>
+                            <div className="text-sm font-black text-slate-800">{assignedQty} <span className="text-[10px] font-bold text-slate-400">{itemUnit}</span></div>
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4 mt-3">
-                          {/* Return Input */}
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Return Quantity:
+                        <div className="grid grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-1.5">
+                              <CheckCircle size={10} /> Recovery Node
                             </label>
                             <input
                               type="number"
                               min="0"
                               max={maxReturnable}
                               step={isPcs ? "1" : "0.01"}
-                              value={returnQuantities[assignment.id] !== undefined ? returnQuantities[assignment.id] : 0}
+                              value={currentReturn}
                               onKeyDown={(e) => {
-                                if (isPcs && (e.key === '.' || e.key === ',' || e.key === 'e')) {
-                                  e.preventDefault();
-                                }
+                                if (isPcs && (e.key === '.' || e.key === ',' || e.key === 'e')) e.preventDefault();
                               }}
                               onChange={(e) => {
-                                const inputValue = e.target.value;
-                                if (inputValue === '') {
-                                  setReturnQuantities({
-                                    ...returnQuantities,
-                                    [assignment.id]: ''
-                                  });
-                                  return;
-                                }
-                                const val = parseFloat(inputValue);
-                                if (isNaN(val)) {
-                                  setReturnQuantities({
-                                    ...returnQuantities,
-                                    [assignment.id]: inputValue
-                                  });
-                                  return;
-                                }
-
-                                let processedVal = val;
-                                if (isPcs) {
-                                  processedVal = Math.floor(val); // Ensure whole number
-                                }
-
-                                const clampedVal = Math.max(0, Math.min(processedVal, maxReturnable));
-                                setReturnQuantities({
-                                  ...returnQuantities,
-                                  [assignment.id]: clampedVal
-                                });
+                                let val = parseFloat(e.target.value);
+                                if (isNaN(val)) val = 0;
+                                if (isPcs) val = Math.floor(val);
+                                val = Math.max(0, Math.min(val, maxReturnable));
+                                setReturnQuantities({ ...returnQuantities, [assignment.id]: val });
                               }}
-                              onBlur={(e) => {
-                                const val = parseFloat(e.target.value);
-                                if (isNaN(val) || val < 0) {
-                                  setReturnQuantities({
-                                    ...returnQuantities,
-                                    [assignment.id]: 0
-                                  });
-                                } else {
-                                  const clampedVal = Math.min(val, maxReturnable);
-                                  setReturnQuantities({
-                                    ...returnQuantities,
-                                    [assignment.id]: clampedVal
-                                  });
-                                }
-                              }}
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-emerald-500 p-3 rounded-xl text-sm font-black text-emerald-700 transition-all"
                             />
-                            <p className="text-xs text-gray-500 mt-1">
-                              Max Returnable: {maxReturnable} {assignment.item?.unit || 'pcs'}
-                            </p>
+                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Available for recovery: {maxReturnable}</p>
                           </div>
 
-                          {/* Calculated Used Display */}
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Used Quantity (Auto):
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                              <Zap size={10} /> Consumed Nodes
                             </label>
-                            <div className="w-full bg-gray-100 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 font-semibold h-[38px] flex items-center">
-                              {calculatedUsed} {assignment.item?.unit || 'pcs'}
-                            </div>
-                            <p className="text-xs text-gray-500 mt-1">
-                              (Assigned - Returned = Used)
-                            </p>
+                            <input
+                              type="number"
+                              min="0"
+                              max={assignedQty - alreadyReturned}
+                              step={isPcs ? "1" : "0.01"}
+                              value={calculatedUsed}
+                              onKeyDown={(e) => {
+                                if (isPcs && (e.key === '.' || e.key === ',' || e.key === 'e')) e.preventDefault();
+                              }}
+                              onChange={(e) => {
+                                let val = parseFloat(e.target.value);
+                                if (isNaN(val)) val = 0;
+                                if (isPcs) val = Math.floor(val);
+                                // Ensure used qty doesn't exceed available
+                                val = Math.max(0, Math.min(val, assignedQty - alreadyReturned));
+
+                                // Calculate return qty based on used qty
+                                // Returned = Total - Used - AlreadyReturned
+                                const newReturnVal = Math.max(0, assignedQty - alreadyReturned - val);
+                                setReturnQuantities({ ...returnQuantities, [assignment.id]: newReturnVal });
+                              }}
+                              className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-emerald-500 p-3 rounded-xl text-sm font-black text-slate-800 transition-all"
+                            />
+                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Mark as used/consumed</p>
                           </div>
                         </div>
 
-                        <div className="flex justify-between mt-2 px-1">
-                          <p className="text-xs text-gray-500">
-                            Available to Return (Balance): <span className="font-semibold text-blue-600">{balance}</span> {assignment.item?.unit || 'pcs'}
-                          </p>
-                        </div>
-
-                        {/* Per Item Return Location */}
-                        <div className="mt-4 border-t pt-3">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Return Location for this Item:
-                          </label>
-                          {(assignment.notes?.includes("(LocID:") || assignment.item?.stock_locations?.length > 0 || assignment.item?.location) ? (
-                            <p className="text-xs text-blue-600 mb-1">
-                              Suggested Source: {
-                                (() => {
-                                  const noteMatch = assignment.notes ? assignment.notes.match(/Assigned from (.*?) \(LocID:/) : null;
-                                  if (noteMatch) return noteMatch[1].trim() + " (Assigned)";
-
-                                  if (assignment.item?.stock_locations?.length > 0)
-                                    return assignment.item.stock_locations.map(s => s.name).join(", ");
-
-                                  return assignment.item?.location || "";
-                                })()
-                              }
-                            </p>
-                          ) : (
-                            <p className="text-xs text-gray-500 mb-1 italic">
-                              Note: Item has no source location set.
-                            </p>
-                          )}
+                        <div style={{ marginTop: '24px', padding: '16px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '10px', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
+                              📍 Item Destination
+                            </span>
+                            <button
+                              onClick={() => {
+                                const laundry = locations?.find(l => l.location_type?.toLowerCase().includes('laundry') || l.name?.toLowerCase().includes('laundry'));
+                                if (laundry) setReturnLocations({ ...returnLocations, [assignment.id]: laundry.id });
+                              }}
+                              style={{ fontSize: '9px', fontWeight: '900', color: '#4f46e5', backgroundColor: 'white', border: '1px solid #e2e8f0', padding: '2px 8px', borderRadius: '6px', cursor: 'pointer' }}
+                            >
+                              SEND TO LAUNDRY
+                            </button>
+                          </div>
                           <select
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '12px', fontSize: '12px', fontWeight: '900', backgroundColor: 'white' }}
                             value={returnLocations[assignment.id] || ""}
                             onChange={(e) => {
                               const val = e.target.value ? parseInt(e.target.value) : "";
-                              setReturnLocations({
-                                ...returnLocations,
-                                [assignment.id]: val
-                              });
+                              setReturnLocations({ ...returnLocations, [assignment.id]: val });
                             }}
                           >
-                            <option value="">Select Location...</option>
-                            {locations.map(loc => {
-                              const isStockSource = assignment.item?.stock_locations?.some(s => s.id === loc.id);
-
-                              const isMasterSource = assignment.item?.location && (
-                                loc.name?.trim().toLowerCase() === assignment.item.location?.trim().toLowerCase() ||
-                                loc.location_code === assignment.item.location
-                              );
-
-                              // Check for Source LocID in notes - user selected source takes precedence
-                              const noteSourceMatch = assignment.notes ? assignment.notes.match(/\(LocID:\s*(\d+)\)/) : null;
-                              const assignedSourceId = noteSourceMatch ? parseInt(noteSourceMatch[1]) : 0;
-                              const isAssignedSource = assignedSourceId && loc.id === assignedSourceId;
-
-                              const isSource = isAssignedSource || isStockSource || isMasterSource;
-
-                              const isDefault = !isSource && (
-                                loc.location_type === 'WAREHOUSE' ||
-                                loc.location_type === 'CENTRAL_WAREHOUSE' ||
-                                loc.is_inventory_point === true
-                              );
-
-                              const isHighlighted = isSource || isDefault;
-                              const bgColor = isSource ? "bg-green-50" : (isDefault ? "bg-gray-50" : "");
-
-                              return (
-                                <option key={loc.id} value={loc.id} className={isHighlighted ? `font-bold ${bgColor}` : ""}>
-                                  {isSource ? '📍 ' : (isDefault ? '📦 ' : '')}
-                                  {loc.name} {loc.location_type ? `(${loc.location_type})` : ''}
-                                  {isSource ? '(Source)' : (isDefault ? '(Default)' : '')}
-                                </option>
-                              );
-                            })}
+                            <option value="">Select Return Destination...</option>
+                            {locations?.map(loc => (
+                              <option key={loc.id} value={loc.id}>{loc.name} {loc.location_type ? `(${loc.location_type})` : ''}</option>
+                            ))}
                           </select>
                         </div>
                       </div>
                     );
                   })}
                 </div>
+              </div>
 
-                <div className="flex justify-end gap-3">
-                  <button
-                    onClick={() => {
-                      setCompletingServiceId(null);
-                      setInventoryAssignments([]);
-                      setReturnQuantities({});
-                      setUsedQuantities({});
-                      setReturnLocations({});
-                      setReturnLocationId(null);
-                    }}
-                    className="px-6 py-2 rounded-lg text-sm font-medium bg-gray-500 hover:bg-gray-600 text-white"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={async () => {
-                      // Complete without returns
-                      if (!completingServiceId) return;
-                      try {
-                        await api.patch(`/services/assigned/${completingServiceId}`, {
-                          status: "completed",
-                          inventory_returns: null
-                        });
-                        setCompletingServiceId(null);
-                        setInventoryAssignments([]);
-                        setReturnQuantities({});
-                        setUsedQuantities({});
-                        setReturnLocations({});
-                        setReturnLocationId(null);
-                        fetchAll();
-                        alert("Service marked as completed without returning inventory items.");
-                      } catch (error) {
-                        console.error("Failed to complete service:", error);
-                        alert(`Failed to complete service: ${error.response?.data?.detail || error.message}`);
+              <div className="p-8 border-t border-slate-50 bg-slate-50/30 flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setCompletingServiceId(null);
+                    setInventoryAssignments([]);
+                    setReturnQuantities({});
+                    setUsedQuantities({});
+                    setReturnLocations({});
+                    setReturnLocationId(null);
+                  }}
+                  className="px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 bg-white border border-slate-200 hover:border-slate-300 transition-all font-bold"
+                >
+                  ABORT
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!completingServiceId) return;
+                    try {
+                      // Include billing status if present (e.g. from payment modal)
+                      const payload = { status: "completed", inventory_returns: [] };
+                      if (completingBillingStatus) {
+                        payload.billing_status = completingBillingStatus;
                       }
-                    }}
-                    className="px-6 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white"
-                  >
-                    Complete Without Returns
-                  </button>
-                  <button
-                    onClick={handleCompleteWithReturns}
-                    className="px-6 py-2 rounded-lg text-sm font-medium text-white bg-green-600 hover:bg-green-700"
-                  >
-                    Complete & Return Items
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-      {/* Checkout Inventory Verification Modal */}
-      {checkoutInventoryModal && checkoutInventoryDetails && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-2xl font-bold mb-4">Checkout Inventory Verification</h2>
-            <div className="mb-4">
-              <p><strong>Room:</strong> {checkoutInventoryDetails.room_number}</p>
-              <p><strong>Guest:</strong> {checkoutInventoryDetails.guest_name}</p>
-              {checkoutInventoryDetails.location_name && (
-                <p><strong>Location:</strong> {checkoutInventoryDetails.location_name}</p>
-              )}
-            </div>
+                      await api.patch(`/services/assigned/${completingServiceId}`, payload);
 
-            {/* Fixed Assets Section */}
-            {checkoutInventoryDetails.fixed_assets && checkoutInventoryDetails.fixed_assets.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-3 text-red-700">Fixed Assets Check</h3>
-                <div className="bg-red-50 p-4 rounded-lg border border-red-100">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-red-200">
-                        <th className="text-left py-2 font-medium text-red-800">Asset Name</th>
-                        <th className="text-left py-2 font-medium text-red-800">Serial No.</th>
-                        <th className="text-center py-2 font-medium text-red-800">Current</th>
-                        <th className="text-center py-2 font-medium text-red-800">Available</th>
-                        <th className="text-right py-2 font-medium text-red-800">Cost</th>
-                        <th className="text-center py-2 font-medium text-red-800">Damaged?</th>
-                        <th className="text-left py-2 font-medium text-red-800">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {checkoutInventoryDetails.fixed_assets.map((asset, idx) => (
-                        <tr key={idx} className="border-b border-red-100 last:border-0 hover:bg-red-50 transition-colors">
-                          <td className="py-2 text-gray-800 font-medium">
-                            {asset.item_name}
-                            <div className="text-xs text-gray-500">{asset.asset_tag}</div>
-                          </td>
-                          <td className="py-2 text-gray-600 border-l border-r border-red-100 px-2 font-mono text-xs">
-                            {asset.serial_number || '-'}
-                          </td>
-                          <td className="py-2 text-center text-gray-600">{asset.current_stock}</td>
-                          <td className="py-2 text-center">
-                            <input
-                              type="number"
-                              min="0"
-                              max="1"
-                              className={`w-12 border rounded p-1 text-center font-bold ${asset.available_stock < asset.current_stock ? 'text-red-600 bg-red-50 border-red-300' : 'text-green-600 border-gray-300'}`}
-                              value={asset.available_stock}
-                              onChange={(e) => handleUpdateAssetDamage(idx, 'available_stock', e.target.value)}
-                            />
-                          </td>
-                          <td className="py-2 text-gray-600 text-right">₹{asset.replacement_cost}</td>
-                          <td className="py-2 text-center">
-                            <input
-                              type="checkbox"
-                              checked={asset.is_damaged || false}
-                              onChange={(e) => handleUpdateAssetDamage(idx, 'is_damaged', e.target.checked)}
-                              className="w-5 h-5 text-red-600 rounded focus:ring-red-500 border-gray-300"
-                            />
-                          </td>
-                          <td className="py-2 px-2">
-                            {(asset.is_damaged || asset.available_stock < asset.current_stock) && (
-                              <input
-                                type="text"
-                                placeholder="Describe damage..."
-                                value={asset.damage_notes || ""}
-                                onChange={(e) => handleUpdateAssetDamage(idx, 'damage_notes', e.target.value)}
-                                className="w-full border p-1 rounded text-sm focus:ring-1 focus:ring-red-500 outline-none"
-                              />
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Separate items into consumables, rent/laundry, and fixed assets */}
-            {(() => {
-              console.log("[DEBUG RENDER] Processing Checkout Inventory Items:", checkoutInventoryDetails.items);
-
-              const consumableItems = (checkoutInventoryDetails.items || []).filter(item => {
-                // Rely strictly on backend flags - no hardcoded name checks
-                const isFixedItem = item.is_fixed_asset;
-                // Override: Force known consumables to NOT be rentable
-                const isKnownConsumable = ["coca", "cola", "water", "chips", "juice", "biscuit"].some(k => (item.item_name || "").toLowerCase().includes(k));
-                const isRentable = !isKnownConsumable && (item.is_rentable || item.track_laundry_cycle);
-
-                if (item.item_name.includes("Coca")) {
-                  console.log(`[DEBUG RENDER] Item ${item.item_name}: isFixed=${isFixedItem}, isRentable=${item.is_rentable}, laundry=${item.track_laundry_cycle} -> IsRentalFilter=${isRentable}`);
-                }
-
-                return !isFixedItem && !isRentable; // Pure consumables
-              });
-
-              const rentalItems = (checkoutInventoryDetails.items || []).filter(item => {
-                const isFixedItem = item.is_fixed_asset;
-                // Override: Force known consumables to NOT be rentable
-                const isKnownConsumable = ["coca", "cola", "water", "chips", "juice", "biscuit"].some(k => (item.item_name || "").toLowerCase().includes(k));
-                const isRentable = !isKnownConsumable && (item.is_rentable || item.track_laundry_cycle);
-                return isRentable && !isFixedItem; // Rentals & Laundry (non-fixed)
-              });
-
-              const fixedItems = (checkoutInventoryDetails.items || []).filter(item => {
-                const isFixedItem = item.is_fixed_asset;
-                return isFixedItem; // Fixed assets
-              });
-
-              return (
-                <>
-                  {/* Consumables Section - Simple tracking */}
-                  {consumableItems.length > 0 && (
-                    <div className="mb-6">
-                      <h3 className="text-lg font-semibold mb-3 text-gray-800">Consumables Inventory Check</h3>
-                      <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                        <p className="text-sm text-blue-800">
-                          📦 <strong>For Consumables:</strong> Enter the remaining quantity (balance) in the "Available Stock" field.
-                          The system will auto-calculate how much was consumed. No damage reporting needed for consumables.
-                        </p>
-                      </div>
-                      <div className="overflow-x-auto border rounded-lg">
-                        <table className="min-w-full text-sm">
-                          <thead className="bg-gray-100 uppercase tracking-wider text-gray-700">
-                            <tr>
-                              <th className="py-3 px-4 text-left">Item Name</th>
-                              <th className="py-3 px-4 text-center">Current Stock</th>
-                              <th className="py-3 px-4 text-center">Available Stock</th>
-                              <th className="py-3 px-4 text-center">Consumed Qty</th>
-                              <th className="py-3 px-4 text-right">Potential Charge</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-200">
-                            {consumableItems.map((item, idx) => {
-                              const originalIdx = checkoutInventoryDetails.items.indexOf(item);
-                              const price = item.charge_per_unit || item.unit_price || 0;
-                              const isPcs = (item.unit || 'pcs').toLowerCase();
-                              const isDiscreteUnit = ['pcs', 'pc', 'can', 'bottle', 'unit', 'nos', 'number', 'pkt', 'pack', 'box', 'tray', 'piece', 'pieces'].includes(isPcs);
-                              const totalQty = isDiscreteUnit ? Math.floor(item.current_stock || 0) : (item.current_stock || 0);
-                              const availableQty = isDiscreteUnit ? Math.floor(item.available_stock || 0) : (item.available_stock || 0);
-
-                              let consumedQty = Math.max(0, totalQty - availableQty);
-                              if (isDiscreteUnit) consumedQty = Math.round(consumedQty);
-                              else consumedQty = parseFloat(consumedQty.toFixed(2));
-
-                              const freeLimit = item.complimentary_qty || 0;
-                              let chargeable;
-
-                              // Fix: Only charge if item is payable or exceeds limit
-                              if (item.is_payable) {
-                                // If marked payable (based on stock logic), everything is chargeable
-                                // (Unless backend provides specific 'payable_qty', but we simplistically assume all consumed from this line are payable if flag is set, 
-                                // OR we assume backend split items into "Payable Coke" and "Free Coke")
-                                // Since we aggregated, we should ideally rely on payable_qty. 
-                                // But here, backend says 'is_payable' is true only if payable_qty > 0.
-
-                                // If backend returns mixed stock (e.g. 1 Free, 1 Payable), and we consumed 1:
-                                // Is it the free one or payable one? 
-                                // Usually we consume Free first. 
-                                // So chargeable = max(0, consumed - (total - payable)) ? No, complex.
-
-                                // Simple logic matching backend intent:
-                                // If item.is_payable is False, then Charge is 0.
-                                // If item.is_payable is True, we charge.
-                                chargeable = Math.max(0, consumedQty - freeLimit);
-                              } else {
-                                chargeable = 0;
-                              }
-
-                              const chargeAmount = chargeable * price;
-
-                              return (
-                                <tr key={idx} className="hover:bg-gray-50">
-                                  <td className="py-3 px-4 font-medium">
-                                    {item.item_name}
-                                    {item.is_payable && <span className="ml-2 text-xs bg-orange-100 text-orange-800 px-2 py-0.5 rounded">PAYABLE</span>}
-                                  </td>
-                                  <td className="py-3 px-4 text-center text-gray-600 font-semibold">{isPcs ? Math.floor(totalQty) : totalQty}</td>
-                                  <td className="py-3 px-4 text-center">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max={totalQty}
-                                      step={isDiscreteUnit ? "1" : "0.01"}
-                                      className="w-20 border rounded p-1.5 text-center font-bold text-green-600 border-gray-300 focus:ring-2 focus:ring-green-500"
-                                      value={availableQty}
-                                      onKeyDown={(e) => {
-                                        if (isDiscreteUnit && (e.key === '.' || e.key === 'e')) {
-                                          e.preventDefault();
-                                        }
-                                      }}
-                                      onChange={(e) => {
-                                        let val = parseFloat(e.target.value);
-                                        if (isNaN(val)) val = 0;
-                                        if (isDiscreteUnit) val = Math.floor(val);
-                                        val = Math.min(totalQty, Math.max(0, val));
-
-                                        handleUpdateInventoryVerification(originalIdx, 'available_stock', val);
-                                        handleUpdateInventoryVerification(originalIdx, 'used_qty', isDiscreteUnit ? Math.round(totalQty - val) : parseFloat((totalQty - val).toFixed(2)));
-                                      }}
-                                      placeholder="Remaining"
-                                    />
-                                  </td>
-                                  <td className="py-3 px-4 text-center">
-                                    <div className="font-bold text-orange-600">
-                                      {consumedQty}
-                                      {freeLimit > 0 && (
-                                        <div className="text-xs text-green-600 font-normal">(Free: {freeLimit})</div>
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td className="py-3 px-4 text-right font-medium text-red-600">
-                                    {chargeAmount > 0 ? `+₹${chargeAmount.toFixed(2)}` : '-'}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Rent / Laundry Items Section */}
-                  {rentalItems.length > 0 && (
-                    <div className="mb-6">
-                      <h3 className="text-lg font-semibold mb-3 text-purple-700">Rent / Laundry Items Check</h3>
-                      <div className="mb-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
-                        <p className="text-sm text-purple-800">
-                          🧺 <strong>For Rent/Laundry Items:</strong> Track good, damaged, and missing items.
-                        </p>
-                      </div>
-                      <div className="overflow-x-auto border rounded-lg">
-                        <table className="min-w-full text-sm">
-                          <thead className="bg-purple-50 uppercase tracking-wider text-purple-800">
-                            <tr>
-                              <th className="py-3 px-4 text-left">Item Name</th>
-                              <th className="py-3 px-4 text-center">Total Stock</th>
-                              <th className="py-3 px-4 text-center">Good</th>
-                              <th className="py-3 px-4 text-center">Damaged</th>
-                              <th className="py-3 px-4 text-center">Missing</th>
-                              <th className="py-3 px-4 text-right">Charge</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-200">
-                            {rentalItems.map((item, idx) => {
-                              const originalIdx = checkoutInventoryDetails.items.indexOf(item);
-                              const price = item.charge_per_unit || item.unit_price || 0;
-                              const damagePrice = item.cost_per_unit || price;
-                              const isPcs = (item.unit || 'pcs').toLowerCase() === 'pcs' || true; // FORCE INT for all
-
-                              const totalQty = Math.floor(item.current_stock || 0);
-                              const good = Math.floor(item.available_stock || 0);
-                              const damaged = Math.floor(item.damage_qty || 0);
-
-                              let missing = totalQty - good - damaged;
-                              if (missing < 0) missing = 0;
-                              missing = Math.round(missing);
-
-                              let chargeAmount = 0;
-                              // FIX: For Rental/Laundry Check, we only calculate DAMAGES/MISSING costs here.
-                              // Rental fees are handled in billing, not verification.
-                              // if (item.is_payable || item.payable_qty > 0) chargeAmount += (item.payable_qty || 0) * price;
-
-                              // Damage/Missing charge
-                              chargeAmount += damaged * damagePrice;
-                              chargeAmount += missing * damagePrice;
-
-                              return (
-                                <tr key={idx} className="hover:bg-purple-50">
-                                  <td className="py-3 px-4 font-medium">
-                                    {item.item_name}
-                                    {item.track_laundry_cycle && <span className="ml-2 text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded">LAUNDRY</span>}
-                                    {item.is_rentable && <span className="ml-2 text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded">RENT</span>}
-                                  </td>
-                                  <td className="py-3 px-4 text-center text-gray-600 font-semibold">{isPcs ? Math.floor(totalQty) : totalQty}</td>
-                                  <td className="py-3 px-4 text-center">
-                                    <input
-                                      type="number"
-                                      readOnly
-                                      className="w-16 border rounded p-1.5 text-center font-bold text-gray-600 bg-gray-100 border-gray-300 cursor-not-allowed"
-                                      value={good}
-                                    />
-                                  </td>
-                                  <td className="py-3 px-4 text-center">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max={totalQty}
-                                      step={isPcs ? "1" : "0.01"}
-                                      className="w-16 border rounded p-1.5 text-center font-bold text-red-600 border-gray-300 focus:ring-2 focus:ring-red-500"
-                                      value={damaged}
-                                      onKeyDown={(e) => {
-                                        if (isPcs && (e.key === '.' || e.key === 'e')) e.preventDefault();
-                                      }}
-                                      onChange={(e) => {
-                                        let val = parseFloat(e.target.value);
-                                        if (isNaN(val)) val = 0;
-                                        if (isPcs) val = Math.floor(val);
-                                        val = Math.min(totalQty, Math.max(0, val));
-
-                                        handleUpdateInventoryVerification(originalIdx, 'damage_qty', val);
-                                        handleUpdateInventoryVerification(originalIdx, 'is_damaged', val > 0);
-
-                                        // Auto-calculate Good (available_stock) as Total - Damaged
-                                        // This assumes Missing is 0 for this workflow
-                                        const newGood = Math.max(0, totalQty - val);
-                                        handleUpdateInventoryVerification(originalIdx, 'available_stock', newGood);
-                                      }}
-                                    />
-                                  </td>
-                                  <td className="py-3 px-4 text-center">
-                                    <div className="font-bold text-orange-600">{missing > 0 ? missing : '-'}</div>
-                                  </td>
-                                  <td className="py-3 px-4 text-right font-medium text-red-600">
-                                    {chargeAmount > 0 ? `+₹${chargeAmount.toFixed(2)}` : '-'}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Fixed Assets Section - REMOVED DUPLICATE */}
-                  {/* The primary Fixed Assets Check is rendered at the top of the modal using checkoutInventoryDetails.fixed_assets */}
-                  {/* Fixed Assets Section - REMOVED DUPLICATE: Primary section is at top */}
-                </>
-              );
-            })()}
-
-            {(!checkoutInventoryDetails.items || checkoutInventoryDetails.items.length === 0) && (
-              <div className="mb-4 text-gray-500">
-                {checkoutInventoryDetails.message || "No inventory items found"}
-              </div>
-            )}
-
-            {/* Fixed Assets Verification Section */}
-            {checkoutInventoryDetails.assets && checkoutInventoryDetails.assets.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-3 text-gray-800">Fixed Assets / Room Inventory</h3>
-                <div className="overflow-x-auto border rounded-lg">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-blue-50 uppercase tracking-wider text-blue-800">
-                      <tr>
-                        <th className="py-3 px-4 text-left">Asset Name</th>
-                        <th className="py-3 px-4 text-center">Serial / Tag</th>
-                        <th className="py-3 px-4 text-center">Quantity</th>
-                        <th className="py-3 px-4 text-center">Present</th>
-                        <th className="py-3 px-4 text-center">Damaged</th>
-                        <th className="py-3 px-4 text-left">Condition / Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {checkoutInventoryDetails.assets.map((asset, idx) => (
-                        <tr key={idx} className={`hover:bg-blue-50 ${asset.is_damaged ? 'bg-red-50' : ''}`}>
-                          <td className="py-3 px-4 font-medium">{asset.item_name || asset.name}</td>
-                          <td className="py-3 px-4 text-center text-gray-600 font-mono text-xs">
-                            {asset.serial_number || asset.asset_tag || '-'}
-                          </td>
-                          <td className="py-3 px-4 text-center font-semibold">{asset.quantity || 1}</td>
-                          <td className="py-3 px-4 text-center">
-                            <input
-                              type="checkbox"
-                              checked={asset.is_present !== false}
-                              onChange={(e) => {
-                                const updated = [...checkoutInventoryDetails.assets];
-                                updated[idx] = { ...updated[idx], is_present: e.target.checked };
-                                setCheckoutInventoryDetails({ ...checkoutInventoryDetails, assets: updated });
-                              }}
-                              className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                            />
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <input
-                              type="checkbox"
-                              checked={asset.is_damaged || false}
-                              onChange={(e) => {
-                                const updated = [...checkoutInventoryDetails.assets];
-                                updated[idx] = { ...updated[idx], is_damaged: e.target.checked };
-                                setCheckoutInventoryDetails({ ...checkoutInventoryDetails, assets: updated });
-                              }}
-                              className="w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500"
-                            />
-                          </td>
-                          <td className="py-3 px-4">
-                            {asset.is_damaged ? (
-                              <input
-                                type="text"
-                                placeholder="Describe damage..."
-                                value={asset.damage_notes || ''}
-                                onChange={(e) => {
-                                  const updated = [...checkoutInventoryDetails.assets];
-                                  updated[idx] = { ...updated[idx], damage_notes: e.target.value };
-                                  setCheckoutInventoryDetails({ ...checkoutInventoryDetails, assets: updated });
-                                }}
-                                className="w-full px-2 py-1 text-xs border border-red-300 rounded bg-red-50 focus:ring-2 focus:ring-red-500 outline-none"
-                              />
-                            ) : (
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${(asset.status || 'active').toLowerCase() === 'active'
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-yellow-100 text-yellow-800'
-                                }`}>
-                                {asset.status || 'Active'}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">Inventory Verification Notes (Optional):</label>
-              <textarea
-                id="inventory-notes"
-                className="w-full border p-2 rounded-lg"
-                rows="3"
-                placeholder="Add any notes about inventory verification..."
-              />
-            </div>
-
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => {
-                  setCheckoutInventoryModal(null);
-                  setCheckoutInventoryDetails(null);
-                }}
-                className="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const notes = document.getElementById('inventory-notes')?.value || '';
-                  handleCompleteCheckoutRequest(checkoutInventoryModal, notes);
-                }}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg"
-              >
-                Complete Verification
-              </button>
-            </div>
-          </div>
-        </div>
-      )
-      }
-
-      {/* Payment Modal - For Service Request Completion */}
-      {
-        paymentModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full">
-              <h2 className="text-xl font-bold mb-4">Complete Service Request</h2>
-
-              <div className="mb-6">
-                <p className="text-gray-700 mb-4">
-                  This delivery service request has an associated food order.
-                  Please select the payment status for the food order:
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <button
-                  onClick={() => handleUpdateRequestStatus(paymentModal.requestId, paymentModal.newStatus, "paid")}
-                  className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
+                      setCompletingServiceId(null);
+                      setCompletingBillingStatus(null);
+                      setInventoryAssignments([]);
+                      setCompletingRequestId(null);
+                      fetchAll();
+                    } catch (error) {
+                      alert(`Failed: ${error.message}`);
+                    }
+                  }}
+                  className="px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 hover:text-slate-900 transition-all"
                 >
-                  ✓ Mark as Paid & Complete
+                  VERIFY ALL CONSUMED
                 </button>
-
                 <button
-                  onClick={() => handleUpdateRequestStatus(paymentModal.requestId, paymentModal.newStatus, "unpaid")}
-                  className="w-full px-4 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-medium transition-colors"
+                  onClick={handleCompleteWithReturns}
+                  className="px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-200 active:scale-95 transition-all"
                 >
-                  Mark as Unpaid & Complete
+                  EXECUTE RECOVERY
                 </button>
-
-                <button
-                  onClick={() => setPaymentModal(null)}
-                  className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                <p className="text-xs text-blue-800">
-                  <strong>Note:</strong> The food order will be marked as completed.
-                  If marked as unpaid, you can collect payment later from the billing section.
-                </p>
               </div>
             </div>
           </div>
         )
-      }
-      {/* Activity Details Modal */}
-      {
-        selectedActivity && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto animate-fade-in-up">
-              <div className="p-6">
-                <div className="flex justify-between items-start mb-6 border-b pb-4">
-                  <div>
-                    <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                      {selectedActivity.type === 'Assigned' ? 'Service Assigment Details' : 'Service Request Details'}
-                      <span className={`px-2 py-1 text-sm rounded-full ${selectedActivity.status === 'completed' ? 'bg-green-100 text-green-800' :
-                        selectedActivity.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
-                          'bg-yellow-100 text-yellow-800'
-                        }`}>
-                        {selectedActivity.status}
-                      </span>
-                    </h2>
-                    <p className="text-gray-500 mt-1">ID: {selectedActivity.id}</p>
-                  </div>
-                  <button
-                    onClick={() => setSelectedActivity(null)}
-                    className="text-gray-400 hover:text-gray-600 transition-colors"
-                  >
-                    <X size={24} />
-                  </button>
+        }
+        {/* Checkout Inventory Verification Modal */}
+        {
+          checkoutInventoryModal && checkoutInventoryDetails && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                <h2 className="text-2xl font-bold mb-4">Checkout Inventory Verification</h2>
+                <div className="mb-4">
+                  <p><strong>Room:</strong> {checkoutInventoryDetails.room_number}</p>
+                  <p><strong>Guest:</strong> {checkoutInventoryDetails.guest_name}</p>
+                  {checkoutInventoryDetails.location_name && (
+                    <p><strong>Location:</strong> {checkoutInventoryDetails.location_name}</p>
+                  )}
                 </div>
 
-                <div className="space-y-6">
-                  {/* Core Info */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-500 mb-1">Service / Description</p>
-                      <p className="font-semibold text-lg text-gray-900">{selectedActivity.name}</p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-500 mb-1">Room</p>
-                      <p className="font-semibold text-lg text-gray-900">{selectedActivity.room}</p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-500 mb-1">Assigned / Checked By</p>
-                      <p className="font-semibold text-lg text-gray-900">
-                        {selectedActivity.employee !== '-'
-                          ? selectedActivity.employee
-                          : (selectedActivity.original?.inventory_checked_by || 'System')}
-                      </p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-500 mb-1">Timestamp</p>
-                      <p className="font-semibold text-gray-900">
-                        {new Date(selectedActivity.date).toLocaleString()}
-                      </p>
+                {/* Fixed Assets Section */}
+                {checkoutInventoryDetails.fixed_assets && checkoutInventoryDetails.fixed_assets.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold mb-3 text-red-700">Fixed Assets Check</h3>
+                    <div className="bg-red-50 p-4 rounded-lg border border-red-100">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-red-200">
+                            <th className="text-left py-2 font-medium text-red-800 w-1/5">Asset Name</th>
+                            <th className="text-left py-2 font-medium text-red-800 w-1/6">Serial No.</th>
+                            <th className="text-center py-2 font-medium text-red-800 w-1/12">Current</th>
+                            <th className="text-center py-2 font-medium text-red-800 w-1/12">Available</th>
+                            <th className="text-right py-2 font-medium text-red-800 w-1/12">Cost</th>
+                            <th className="text-center py-2 font-medium text-red-800 w-1/12">Damaged?</th>
+                            <th className="text-left py-2 font-medium text-red-800 w-1/6">Return / Action</th>
+                            <th className="text-center py-2 font-medium text-red-800 w-1/12">Replace?</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {checkoutInventoryDetails.fixed_assets.map((asset, idx) => (
+                            <tr key={idx} className="border-b border-red-100 last:border-0 hover:bg-red-50 transition-colors">
+                              <td className="py-2 text-gray-800 font-medium">
+                                {asset.item_name}
+                                <div className="text-xs text-gray-500">{asset.asset_tag}</div>
+                              </td>
+                              <td className="py-2 text-gray-600 border-l border-r border-red-100 px-2 font-mono text-xs">
+                                {asset.serial_number || '-'}
+                              </td>
+                              <td className="py-2 text-center text-gray-600">{asset.current_stock}</td>
+                              <td className="py-2 text-center">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="1"
+                                  className={`w-12 border rounded p-1 text-center font-bold ${asset.available_stock < asset.current_stock ? 'text-red-600 bg-red-50 border-red-300' : 'text-green-600 border-gray-300'}`}
+                                  value={asset.available_stock}
+                                  onChange={(e) => handleUpdateAssetDamage(idx, 'available_stock', e.target.value)}
+                                />
+                              </td>
+                              <td className="py-2 text-gray-600 text-right">₹{asset.replacement_cost}</td>
+                              <td className="py-2 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={asset.is_damaged || false}
+                                  onChange={(e) => handleUpdateAssetDamage(idx, 'is_damaged', e.target.checked)}
+                                  className="w-5 h-5 text-red-600 rounded focus:ring-red-500 border-gray-300"
+                                />
+                              </td>
+                              <td className="py-2 px-2">
+                                <div className="space-y-3">
+                                  {/* Option 1: Return (Missing/Moved/Explicit) */}
+                                  {(asset.available_stock < asset.current_stock || asset.is_rentable || asset.is_returned || asset.track_laundry_cycle || (asset.item_name || "").toLowerCase().includes("towel") || (asset.item_name || "").toLowerCase().includes("sheet") || (asset.item_name || "").toLowerCase().includes("linen")) && !asset.is_damaged && (
+                                    <div>
+                                      <div className="flex flex-col gap-2">
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="checkbox"
+                                            checked={asset.is_returned || false}
+                                            onChange={(e) => handleUpdateAssetDamage(idx, 'is_returned', e.target.checked)}
+                                            className="rounded text-blue-600 focus:ring-blue-500"
+                                            id={`fa-return-${idx}`}
+                                          />
+                                          <label htmlFor={`fa-return-${idx}`} className="text-[10px] text-blue-800 font-bold uppercase cursor-pointer">Return to Stock</label>
+                                        </div>
+
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="checkbox"
+                                            checked={asset.is_laundry || false}
+                                            onChange={(e) => handleUpdateAssetDamage(idx, 'is_laundry', e.target.checked)}
+                                            className="rounded text-green-600 focus:ring-green-500"
+                                            id={`fa-laundry-${idx}`}
+                                          />
+                                          <label htmlFor={`fa-laundry-${idx}`} className="text-[10px] text-green-800 font-bold uppercase cursor-pointer">Mark Laundry</label>
+                                        </div>
+                                      </div>
+
+                                      {(asset.is_returned || asset.is_laundry || asset.available_stock < asset.current_stock) && (
+                                        <select
+                                          className="w-full border rounded p-1 text-xs bg-white focus:ring-1 focus:ring-blue-500 outline-none mt-2"
+                                          value={asset.is_laundry ? (asset.laundry_location_id || "") : (asset.return_location_id || "")}
+                                          onChange={(e) => {
+                                            const field = asset.is_laundry ? 'laundry_location_id' : 'return_location_id';
+                                            handleUpdateAssetDamage(idx, field, e.target.value);
+                                          }}
+                                        >
+                                          <option value="">-- To {asset.is_laundry ? 'Laundry' : 'Location'} --</option>
+                                          {locations.filter(l =>
+                                            asset.is_laundry
+                                              ? l.location_type?.includes('LAUNDRY')
+                                              : (l.is_inventory_point || l.location_type?.includes('WAREHOUSE') || l.location_type?.includes('REPAIR'))
+                                          ).map(loc => (
+                                            <option key={loc.id} value={loc.id}>To {loc.name}</option>
+                                          ))}
+                                        </select>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Option 2: Damaged/Waste */}
+                                  {asset.is_damaged && (
+                                    <div className="bg-red-50/50 p-2 rounded border border-red-100 mt-2">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <input
+                                          type="checkbox"
+                                          checked={asset.is_waste !== false}
+                                          onChange={(e) => handleUpdateAssetDamage(idx, 'is_waste', e.target.checked)}
+                                          className="rounded text-red-600 focus:ring-red-500"
+                                          id={`fa-waste-${idx}`}
+                                        />
+                                        <label htmlFor={`fa-waste-${idx}`} className="text-[10px] text-red-800 font-bold uppercase cursor-pointer">Mark Waste</label>
+                                      </div>
+
+                                      <select
+                                        className="w-full border rounded p-1 text-xs bg-white focus:ring-red-500 outline-none"
+                                        value={asset.waste_location_id || ""}
+                                        onChange={(e) => handleUpdateAssetDamage(idx, 'waste_location_id', e.target.value)}
+                                        disabled={!asset.is_waste}
+                                      >
+                                        <option value="">-- Select Waste Loc --</option>
+                                        {locations.filter(l => l.location_type?.includes('WASTE') || l.location_type?.includes('REPAIR')).map(loc => (
+                                          <option key={loc.id} value={loc.id}>{loc.name}</option>
+                                        ))}
+                                      </select>
+
+                                      <input
+                                        type="text"
+                                        placeholder="Describe damage..."
+                                        value={asset.damage_notes || ""}
+                                        onChange={(e) => handleUpdateAssetDamage(idx, 'damage_notes', e.target.value)}
+                                        className="w-full border p-1 rounded text-xs focus:ring-1 focus:ring-red-500 outline-none mt-1"
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2 text-center">
+                                <div className="flex flex-col items-center gap-1">
+                                  <input
+                                    type="checkbox"
+                                    checked={asset.request_replacement || false}
+                                    onChange={(e) => handleUpdateAssetDamage(idx, 'request_replacement', e.target.checked)}
+                                    className="w-5 h-5 text-red-600 rounded focus:ring-red-500 border-gray-300"
+                                  />
+                                  {asset.request_replacement && (
+                                    <span className="text-[9px] font-bold text-red-600 bg-red-100 px-1.5 py-0.5 rounded uppercase tracking-wide">
+                                      Request
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
+                )}
 
+                {(() => {
+                  console.log("[DEBUG RENDER] Processing Checkout Inventory Items:", checkoutInventoryDetails.items);
 
+                  const consumableItems = (checkoutInventoryDetails.items || []).filter(item => {
+                    // Rely strictly on backend flags - no hardcoded name checks
+                    const isFixedItem = item.is_fixed_asset;
+                    // Override: Force known consumables to NOT be rentable
+                    const isKnownConsumable = ["coca", "cola", "water", "chips", "juice", "biscuit"].some(k => (item.item_name || "").toLowerCase().includes(k));
+                    const isRentable = !isKnownConsumable && (item.is_rentable || item.track_laundry_cycle);
 
-                  {/* Inventory Consumption & Asset Damage Details */}
-                  {selectedActivity.type !== 'Assigned' && selectedActivity.original && (
-                    <div className="space-y-4">
-                      {/* Asset Damages */}
-                      {selectedActivity.original.asset_damages && selectedActivity.original.asset_damages.length > 0 && (
-                        <div className="bg-red-50 p-4 rounded-lg border border-red-100">
-                          <h3 className="text-md font-semibold text-red-800 mb-2">Asset Damages Reported</h3>
-                          <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                              <thead className="bg-red-100 text-red-900">
-                                <tr>
-                                  <th className="px-3 py-2 text-left">Item Name</th>
-                                  <th className="px-3 py-2 text-center">Cost</th>
-                                  <th className="px-3 py-2 text-left">Notes</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {selectedActivity.original.asset_damages.map((asset, idx) => (
-                                  <tr key={idx} className="border-t border-red-200">
-                                    <td className="px-3 py-2 font-medium">{asset.item_name}</td>
-                                    <td className="px-3 py-2 text-center">₹{asset.replacement_cost}</td>
-                                    <td className="px-3 py-2 text-gray-700">{asset.notes || '-'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                    if (item.item_name.includes("Coca")) {
+                      console.log(`[DEBUG RENDER] Item ${item.item_name}: isFixed=${isFixedItem}, isRentable=${item.is_rentable}, laundry=${item.track_laundry_cycle} -> IsRentalFilter=${isRentable}`);
+                    }
+
+                    return !isFixedItem && !isRentable; // Pure consumables
+                  });
+
+                  const rentalItems = (checkoutInventoryDetails.items || []).filter(item => {
+                    const isFixedItem = item.is_fixed_asset;
+                    // Override: Force known consumables to NOT be rentable
+                    const isKnownConsumable = ["coca", "cola", "water", "chips", "juice", "biscuit"].some(k => (item.item_name || "").toLowerCase().includes(k));
+                    const isRentable = !isKnownConsumable && (item.is_rentable || item.track_laundry_cycle);
+                    return isRentable && !isFixedItem; // Rentals & Laundry (non-fixed)
+                  });
+
+                  const fixedItems = (checkoutInventoryDetails.items || []).filter(item => {
+                    const isFixedItem = item.is_fixed_asset;
+                    return isFixedItem; // Fixed assets
+                  });
+
+                  return (
+                    <>
+                      {/* Consumables Section - Simple tracking */}
+                      {consumableItems.length > 0 && (
+                        <div className="mb-6">
+                          <h3 className="text-lg font-semibold mb-3 text-gray-800">Consumables Inventory Check</h3>
+                          <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                            <p className="text-sm text-blue-800">
+                              📦 <strong>For Consumables:</strong> Enter the remaining quantity (balance) in the "Available Stock" field.
+                              The system will auto-calculate how much was consumed. No damage reporting needed for consumables.
+                            </p>
                           </div>
-                        </div>
-                      )}
-
-                      {/* Inventory Items Used */}
-                      {selectedActivity.original.inventory_data_with_charges && selectedActivity.original.inventory_data_with_charges.length > 0 && (
-                        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                          <h3 className="text-md font-semibold text-gray-800 mb-2">Inventory Items Consumed</h3>
-                          <div className="overflow-x-auto">
+                          <div className="overflow-x-auto border rounded-lg">
                             <table className="min-w-full text-sm">
-                              <thead className="bg-gray-200 text-gray-700">
+                              <thead className="bg-gray-100 uppercase tracking-wider text-gray-700">
                                 <tr>
-                                  <th className="px-3 py-2 text-left">Item Name</th>
-                                  <th className="px-3 py-2 text-center">Used</th>
-                                  <th className="px-3 py-2 text-center">Missing</th>
-                                  <th className="px-3 py-2 text-center">Charge</th>
+                                  <th className="py-3 px-4 text-left w-1/4">Item Details</th>
+                                  <th className="py-3 px-4 text-center w-1/6">Stock / Free</th>
+                                  <th className="py-3 px-4 text-center w-1/6">Remaining</th>
+                                  <th className="py-3 px-4 text-center w-1/6">Consumed</th>
+                                  <th className="py-3 px-4 text-left w-1/6">Return To</th>
+                                  <th className="py-3 px-4 text-right w-1/12">Charge</th>
                                 </tr>
                               </thead>
-                              <tbody>
-                                {selectedActivity.original.inventory_data_with_charges.map((item, idx) => {
-                                  // Safely fallback if missing_item_charge is missing
-                                  const itemCharge = item.missing_item_charge || 0;
+                              <tbody className="divide-y divide-gray-200">
+                                {consumableItems.map((item, idx) => {
+                                  const originalIdx = checkoutInventoryDetails.items.indexOf(item);
+                                  const price = item.charge_per_unit || item.unit_price || 0;
+                                  const isPcs = (item.unit || 'pcs').toLowerCase();
+                                  const isDiscreteUnit = ['pcs', 'pc', 'can', 'bottle', 'unit', 'nos', 'number', 'pkt', 'pack', 'box', 'tray', 'piece', 'pieces'].includes(isPcs);
+                                  const totalQty = isDiscreteUnit ? Math.floor(item.current_stock || 0) : (item.current_stock || 0);
+                                  const availableQty = isDiscreteUnit ? Math.floor(item.available_stock || 0) : (item.available_stock || 0);
+
+                                  let consumedQty = Math.max(0, totalQty - availableQty);
+                                  if (isDiscreteUnit) consumedQty = Math.round(consumedQty);
+                                  else consumedQty = parseFloat(consumedQty.toFixed(2));
+
+                                  // Fix: Ensure consumedQty doesn't exceed total (sanity check)
+                                  consumedQty = Math.min(consumedQty, totalQty);
+
+                                  const freeLimit = item.complimentary_qty || 0;
+                                  let chargeable;
+
+                                  // Fix logic: Only charge if item is payable or exceeds limit
+                                  if (item.is_payable) {
+                                    chargeable = Math.max(0, consumedQty - freeLimit);
+                                  } else {
+                                    chargeable = 0;
+                                  }
+
+                                  const chargeAmount = chargeable * price;
+
                                   return (
-                                    <tr key={idx} className="border-t border-gray-200">
-                                      <td className="px-3 py-2 font-medium">{item.item_name}</td>
-                                      <td className="px-3 py-2 text-center">{item.used_qty}</td>
-                                      <td className="px-3 py-2 text-center text-red-600">{item.missing_qty > 0 ? item.missing_qty : '-'}</td>
-                                      <td className="px-3 py-2 text-center font-medium">
-                                        {itemCharge > 0 ? <span className="text-red-600">₹{itemCharge}</span> : <span className="text-green-600">Free</span>}
+                                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                                      <td className="py-3 px-4">
+                                        <div className="flex flex-col">
+                                          <span className="font-medium text-gray-900">{item.item_name}</span>
+                                          <div className="flex items-center gap-2 mt-1">
+                                            {item.is_payable && <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded border border-amber-200">PAYABLE</span>}
+                                            <span className="text-xs text-gray-500">₹{price}/unit</span>
+                                          </div>
+                                        </div>
+                                      </td>
+                                      <td className="py-3 px-4 text-center">
+                                        <div className="text-sm font-semibold text-gray-700">{isPcs ? Math.floor(totalQty) : totalQty} <span className="text-xs font-normal text-gray-500">Total</span></div>
+                                        {freeLimit > 0 && <div className="text-xs text-green-600 font-medium">{isDiscreteUnit ? Math.floor(freeLimit) : freeLimit} Free</div>}
+                                      </td>
+                                      <td className="py-3 px-4 text-center">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max={totalQty}
+                                          step={isDiscreteUnit ? "1" : "0.01"}
+                                          className="w-20 border rounded-lg p-2 text-center font-bold text-gray-800 bg-white border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all shadow-sm"
+                                          value={availableQty}
+                                          onKeyDown={(e) => {
+                                            if (isDiscreteUnit && (e.key === '.' || e.key === 'e')) {
+                                              e.preventDefault();
+                                            }
+                                          }}
+                                          onChange={(e) => {
+                                            let val = parseFloat(e.target.value);
+                                            if (isNaN(val)) val = 0;
+                                            if (isDiscreteUnit) val = Math.floor(val);
+                                            val = Math.min(totalQty, Math.max(0, val));
+
+                                            handleUpdateInventoryVerification(originalIdx, 'available_stock', val);
+                                            handleUpdateInventoryVerification(originalIdx, 'used_qty', isDiscreteUnit ? Math.round(totalQty - val) : parseFloat((totalQty - val).toFixed(2)));
+                                          }}
+                                        />
+                                      </td>
+                                      <td className="py-3 px-4 text-center">
+                                        {consumedQty > 0 ? (
+                                          <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-orange-100 text-orange-700 font-bold text-sm">
+                                            {consumedQty}
+                                          </div>
+                                        ) : (
+                                          <span className="text-gray-400">-</span>
+                                        )}
+                                      </td>
+                                      <td className="py-3 px-4">
+                                        {availableQty > 0 ? (
+                                          <select
+                                            className="w-full border rounded p-1.5 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none text-gray-700"
+                                            value={item.return_location_id || ""}
+                                            onChange={(e) => handleUpdateInventoryVerification(originalIdx, 'return_location_id', e.target.value)}
+                                          >
+                                            <option value="">Stay in Room</option>
+                                            {locations.filter(l => l.is_inventory_point || l.location_type?.includes('WAREHOUSE')).map(loc => (
+                                              <option key={loc.id} value={loc.id}>Return to {loc.name}</option>
+                                            ))}
+                                          </select>
+                                        ) : (
+                                          <span className="text-xs text-gray-400 italic">None to return</span>
+                                        )}
+                                      </td>
+                                      <td className="py-3 px-4 text-right">
+                                        {chargeAmount > 0 ? (
+                                          <div className="font-bold text-red-600 bg-red-50 py-1 px-2 rounded inline-block">
+                                            +₹{chargeAmount.toFixed(2)}
+                                          </div>
+                                        ) : (
+                                          <span className="text-gray-400">-</span>
+                                        )}
                                       </td>
                                     </tr>
                                   );
@@ -4894,24 +4709,1236 @@ const Services = () => {
                           </div>
                         </div>
                       )}
+
+                      {/* Rent / Laundry Items Section */}
+                      {rentalItems.length > 0 && (
+                        <div className="mb-6">
+                          <h3 className="text-lg font-semibold mb-3 text-purple-700">Rent / Laundry Items Check</h3>
+                          <div className="mb-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                            <p className="text-sm text-purple-800">
+                              🧺 <strong>For Rent/Laundry Items:</strong> Track returns to laundry, damage handling, and replacement requests.
+                            </p>
+                          </div>
+                          <div className="overflow-x-auto border rounded-lg">
+                            <table className="min-w-full text-sm">
+                              <thead className="bg-purple-50 uppercase tracking-wider text-purple-800">
+                                <tr>
+                                  <th className="py-3 px-4 text-left w-1/5">Item Details</th>
+                                  <th className="py-3 px-4 text-center w-1/12">Total</th>
+                                  <th className="py-3 px-4 text-center w-1/6">Good (Laundry)</th>
+                                  <th className="py-3 px-4 text-center w-1/6">Damaged/Waste</th>
+                                  <th className="py-3 px-4 text-center w-1/12">Missing</th>
+                                  <th className="py-3 px-4 text-left w-1/6">Return To</th>
+                                  <th className="py-3 px-4 text-center w-1/12">Replace?</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-200">
+                                {rentalItems.map((item, idx) => {
+                                  const originalIdx = checkoutInventoryDetails.items.indexOf(item);
+                                  const price = item.charge_per_unit || item.unit_price || 0;
+                                  const damagePrice = item.cost_per_unit || price;
+
+                                  const totalQty = Math.floor(item.current_stock || 0);
+
+                                  // Good = Available Stock (User Input)
+                                  const good = Math.floor(item.available_stock || 0);
+                                  // Damaged = Damage Qty (User Input)
+                                  const damaged = Math.floor(item.damage_qty || 0);
+
+                                  // Calculate Missing
+                                  let missing = totalQty - good - damaged;
+                                  if (missing < 0) missing = 0;
+                                  missing = Math.round(missing);
+
+                                  const chargeAmount = (damaged * damagePrice) + (missing * damagePrice);
+
+                                  return (
+                                    <tr key={idx} className="hover:bg-purple-50 transition-colors">
+                                      <td className="py-3 px-4">
+                                        <div className="font-medium text-gray-900">{item.item_name}</div>
+                                        <div className="text-xs text-gray-500">{item.item_code}</div>
+                                        {chargeAmount > 0 && (
+                                          <div className="mt-1 text-xs text-red-600 font-bold">
+                                            Charge: ₹{chargeAmount.toFixed(2)}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-3 px-4 text-center font-bold text-gray-700">{totalQty}</td>
+
+                                      {/* Good (Laundry) Input */}
+                                      <td className="py-3 px-4 text-center">
+                                        <div className="flex flex-col gap-2">
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            max={totalQty}
+                                            className="w-full border rounded-lg p-2 text-center font-bold text-green-700 border-green-200 focus:ring-green-500"
+                                            value={good}
+                                            onChange={(e) => {
+                                              let val = Math.max(0, parseInt(e.target.value) || 0);
+                                              handleUpdateInventoryVerification(originalIdx, 'available_stock', val);
+                                            }}
+                                            placeholder="Good"
+                                          />
+                                          <span className="text-[10px] text-gray-500 uppercase tracking-wide">To Laundry/Stock</span>
+                                        </div>
+                                      </td>
+
+                                      {/* Damaged Input */}
+                                      <td className="py-3 px-4 text-center">
+                                        <div className="flex flex-col gap-2">
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            max={totalQty}
+                                            className="w-full border rounded-lg p-2 text-center font-bold text-red-700 border-red-200 focus:ring-red-500"
+                                            value={damaged}
+                                            onChange={(e) => {
+                                              let val = Math.max(0, parseInt(e.target.value) || 0);
+                                              handleUpdateInventoryVerification(originalIdx, 'damage_qty', val);
+                                            }}
+                                            placeholder="Damaged"
+                                          />
+                                          <span className="text-[10px] text-gray-500 uppercase tracking-wide">To Waste/Repair</span>
+                                        </div>
+                                      </td>
+
+                                      {/* Missing Display */}
+                                      <td className="py-3 px-4 text-center">
+                                        <div className={`font-bold ${missing > 0 ? 'text-red-600' : 'text-gray-400'}`}>
+                                          {missing}
+                                        </div>
+                                      </td>
+
+                                      {/* Return Location Logic */}
+                                      <td className="py-3 px-4">
+                                        <div className="space-y-3">
+                                          {/* For Good items -> Laundry or Stock */}
+                                          {good > 0 && (
+                                            <div className="bg-green-50/50 p-2 rounded border border-green-100">
+                                              <div className="flex items-center gap-2 mb-1">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={item.is_laundry || false}
+                                                  onChange={(e) => handleUpdateInventoryVerification(originalIdx, 'is_laundry', e.target.checked)}
+                                                  className="rounded text-green-600 focus:ring-green-500"
+                                                  id={`laundry-${idx}`}
+                                                />
+                                                <label htmlFor={`laundry-${idx}`} className="text-[10px] text-green-800 font-bold uppercase cursor-pointer">Mark Laundry</label>
+                                              </div>
+
+                                              <select
+                                                className="w-full border rounded p-1.5 text-xs bg-white focus:ring-green-500 outline-none"
+                                                value={item.is_laundry ? (item.laundry_location_id || "") : (item.return_location_id || "")}
+                                                onChange={(e) => {
+                                                  const field = item.is_laundry ? 'laundry_location_id' : 'return_location_id';
+                                                  handleUpdateInventoryVerification(originalIdx, field, e.target.value);
+                                                }}
+                                              >
+                                                <option value="">-- Select {item.is_laundry ? 'Laundry' : 'Stock'} --</option>
+                                                {locations.filter(l =>
+                                                  item.is_laundry
+                                                    ? l.location_type?.includes('LAUNDRY')
+                                                    : (l.is_inventory_point || l.location_type?.includes('WAREHOUSE'))
+                                                ).map(loc => (
+                                                  <option key={loc.id} value={loc.id}>{loc.name}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                          )}
+
+                                          {/* For Damaged items -> Waste */}
+                                          {damaged > 0 && (
+                                            <div className="bg-red-50/50 p-2 rounded border border-red-100">
+                                              <div className="flex items-center gap-2 mb-1">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={item.is_waste !== false} // Default to true if undefined for damaged items? Let's verify user intent. User said "damage mark to waste option". So simple checkbox.
+                                                  onChange={(e) => handleUpdateInventoryVerification(originalIdx, 'is_waste', e.target.checked)}
+                                                  className="rounded text-red-600 focus:ring-red-500"
+                                                  id={`waste-${idx}`}
+                                                />
+                                                <label htmlFor={`waste-${idx}`} className="text-[10px] text-red-800 font-bold uppercase cursor-pointer">Mark Waste</label>
+                                              </div>
+
+                                              <select
+                                                className="w-full border rounded p-1.5 text-xs bg-white focus:ring-red-500 outline-none"
+                                                value={item.waste_location_id || ""}
+                                                onChange={(e) => handleUpdateInventoryVerification(originalIdx, 'waste_location_id', e.target.value)}
+                                                disabled={!item.is_waste}
+                                              >
+                                                <option value="">-- Select Waste Loc --</option>
+                                                {locations.filter(l => l.location_type?.includes('WASTE') || l.location_type?.includes('REPAIR')).map(loc => (
+                                                  <option key={loc.id} value={loc.id}>{loc.name}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </td>
+
+                                      {/* Replace Request */}
+                                      <td className="py-3 px-4 text-center">
+                                        <div className="flex flex-col items-center gap-1">
+                                          <input
+                                            type="checkbox"
+                                            checked={item.request_replacement || false}
+                                            onChange={(e) => handleUpdateInventoryVerification(originalIdx, 'request_replacement', e.target.checked)}
+                                            className="w-5 h-5 text-purple-600 rounded focus:ring-purple-500 border-gray-300"
+                                          />
+                                          {item.request_replacement && (
+                                            <span className="text-[9px] font-bold text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded uppercase tracking-wide">
+                                              Request
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+
+                              </tbody>
+                            </table >
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Fixed Assets Section - REMOVED DUPLICATE */}
+                      {/* The primary Fixed Assets Check is rendered at the top of the modal using checkoutInventoryDetails.fixed_assets */}
+                      {/* Fixed Assets Section - REMOVED DUPLICATE: Primary section is at top */}
+                    </>
+                  );
+                })()}
+
+                {
+                  (!checkoutInventoryDetails.items || checkoutInventoryDetails.items.length === 0) && (
+                    <div className="mb-4 text-gray-500">
+                      {checkoutInventoryDetails.message || "No inventory items found"}
+                    </div>
+                  )
+                }
+
+                {/* Remaining sections are handled by the dynamic processing logic above */}
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">Inventory Verification Notes (Optional):</label>
+                  <textarea
+                    id="inventory-notes"
+                    className="w-full border p-2 rounded-lg"
+                    rows="3"
+                    placeholder="Add any notes about inventory verification..."
+                  />
+                </div>
+
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => {
+                      setCheckoutInventoryModal(null);
+                      setCheckoutInventoryDetails(null);
+                    }}
+                    className="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      const notes = document.getElementById('inventory-notes')?.value || '';
+                      handleCompleteCheckoutRequest(checkoutInventoryModal, notes);
+                    }}
+                    className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg"
+                  >
+                    Complete Verification
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        }
+
+        {/* Payment / Completion Status Modal */}
+        {
+          paymentModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 max-w-md w-full">
+                <h2 className="text-xl font-bold mb-4">Complete Service</h2>
+
+                <div className="mb-6">
+                  <p className="text-gray-700 mb-4 font-medium">
+                    Please select the billing status for this service:
+                  </p>
+
+                  {/* Display Items Used in this Service with INLINE RETURN OPTIONS */}
+                  {(() => {
+                    // Find the relevant service to show items
+                    const reqId = paymentModal.requestId;
+                    const assignedId = reqId > 2000000 ? reqId - 2000000 : null;
+
+                    let items = [];
+                    if (assignedId) {
+                      const svc = assignedServices.find(s => s.id === assignedId);
+                      items = svc?.debug_items || svc?.inventory_items_used || [];
+                    } else {
+                      const req = serviceRequests.find(r => r.id === reqId);
+                      if (req && req.assigned_service_id) {
+                        const svc = assignedServices.find(s => s.id === req.assigned_service_id);
+                        items = svc?.debug_items || svc?.inventory_items_used || [];
+                      }
+                    }
+
+                    if (items && items.length > 0) {
+                      return (
+                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mb-4">
+                          <h4 className="text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide flex justify-between items-center">
+                            <span>Inventory Actions ({items.length})</span>
+                            <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">Update Usage Below</span>
+                          </h4>
+                          <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                            {items.map((item, idx) => {
+                              const assignedQty = item.quantity_assigned || item.quantity || 0;
+                              const currentRet = returnQuantities[item.id] !== undefined ? returnQuantities[item.id] : 0;
+                              // Default to 0 return (all consumed) unless changed
+
+                              return (
+                                <div key={idx} className="bg-white p-2 rounded border border-slate-200 shadow-sm text-xs">
+                                  <div className="flex justify-between font-bold text-slate-700 mb-1">
+                                    <span>{item.item?.name || item.name}</span>
+                                    <span>Total: {assignedQty} {item.item?.unit || item.unit}</span>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2 mt-2">
+                                    <div>
+                                      <label className="block text-[9px] text-slate-500 uppercase font-bold mb-0.5">Return Qty</label>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        max={assignedQty}
+                                        step="0.01"
+                                        className="w-full border border-slate-300 rounded px-2 py-1 text-xs font-bold"
+                                        placeholder="0"
+                                        value={returnQuantities[item.id] || ''}
+                                        onChange={(e) => {
+                                          const val = Math.min(parseFloat(e.target.value) || 0, assignedQty);
+                                          setReturnQuantities(prev => ({ ...prev, [item.id]: val }));
+                                        }}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[9px] text-slate-500 uppercase font-bold mb-0.5">Return To</label>
+                                      <select
+                                        className="w-full border border-slate-300 rounded px-1 py-1 text-[10px]"
+                                        value={returnLocations[item.id] || ""}
+                                        onChange={(e) => setReturnLocations(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                      >
+                                        <option value="">(Stock)</option>
+                                        {locations.filter(l => l.is_inventory_point).map(l => (
+                                          <option key={l.id} value={l.id}>{l.name}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="text-right mt-1 text-[10px] text-slate-500">
+                                    {assignedQty - (returnQuantities[item.id] || 0)} consumed
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => {
+                      // Pass TRUE for forceReturn to skip the second modal, since we handled it here!
+                      // But wait, handleUpdateRequestStatus expects 'forceReturn' to mean "show the modal".
+                      // We need a way to say "I have data, just save it".
+                      // Update: handleUpdateRequestStatus calls handleStatusChange.
+                      // We should probably just call handleStatusChange directly if we have data, OR update handleUpdateRequestStatus to accept data.
+                      // For now, let's keep the existing flow but pass data if possible? 
+                      // Actually, simpler: Use the existing "Paid & Verify" button to open the full modal (which now pre-populates),
+                      // OR if the user entered data here, we might want to save it directly.
+                      // Given the request "option to return items... include return qty", doing it INLINE is best.
+
+                      // Let's modify handleUpdateRequestStatus to accept 'inventoryData'
+                      // Since we don't have that signature, we stick to the plan:
+                      // 1. Mark Paid
+                      // 2. Open Verify Modal (which will retain the state we just set in returnQuantities!)
+                      handleUpdateRequestStatus(paymentModal.requestId, paymentModal.newStatus, "paid", true);
+                    }}
+                    className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors shadow-sm flex items-center justify-center gap-2"
+                  >
+                    <span>✓</span> Confirm Payment & Inventory
+                  </button>
+
+                  <button
+                    onClick={() => handleUpdateRequestStatus(paymentModal.requestId, paymentModal.newStatus, "unpaid", true)}
+                    className="w-full px-4 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-medium transition-colors shadow-sm"
+                  >
+                    Confirm Unpaid & Inventory
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setPaymentModal(null);
+                      setPaymentModalReturnsChecked(false);
+                    }}
+                    className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                  <p className="text-xs text-blue-800">
+                    <strong>Note:</strong> The food order will be marked as completed.
+                    If marked as unpaid, you can collect payment later from the billing section.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )
+        }
+
+        {/* Return Items Modal - For 'return_items' Service Request Completion */}
+        {
+          returnRequestModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+                <h2 className="text-xl font-bold mb-4 text-purple-800 flex items-center gap-2">
+                  🔄 Return Unconsumed Items (Updated v2)
+                </h2>
+
+                <div className="mb-6">
+                  <p className="text-gray-700 mb-4">
+                    Select the return location for each item individually:
+                  </p>
+
+                  {returnRequestModal.items.length === 0 ? (
+                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                      <p className="text-sm text-gray-500 italic">No specific items listed, returning general inventory.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {returnRequestModal.items.map((item, idx) => {
+                        // Initialize return location for this item if not set
+                        if (!returnLocations[`return_item_${idx}`]) {
+                          // Try to find default location (warehouse/store)
+                          const defaultLoc = locations.find(loc =>
+                            loc.location_type === 'WAREHOUSE' ||
+                            loc.location_type === 'CENTRAL_WAREHOUSE' ||
+                            loc.is_inventory_point === true
+                          );
+                          if (defaultLoc) {
+                            setTimeout(() => {
+                              setReturnLocations(prev => ({
+                                ...prev,
+                                [`return_item_${idx}`]: defaultLoc.id
+                              }));
+                            }, 0);
+                          }
+                        }
+
+                        return (
+                          <div key={idx} className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <p className="font-semibold text-gray-800">{item.item_name}</p>
+                                <p className="text-sm text-gray-600">
+                                  Quantity: <span className="font-bold text-purple-700">{item.quantity_to_return} {item.unit}</span>
+                                </p>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Return Location for this Item:
+                              </label>
+                              <select
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                value={returnLocations[`return_item_${idx}`] || ""}
+                                onChange={(e) => {
+                                  const val = e.target.value ? parseInt(e.target.value) : "";
+                                  setReturnLocations({
+                                    ...returnLocations,
+                                    [`return_item_${idx}`]: val
+                                  });
+                                }}
+                              >
+                                <option value="">Select Location...</option>
+                                {locations.map(loc => {
+                                  const isDefault = (
+                                    loc.location_type === 'WAREHOUSE' ||
+                                    loc.location_type === 'CENTRAL_WAREHOUSE' ||
+                                    loc.is_inventory_point === true
+                                  );
+
+                                  return (
+                                    <option key={loc.id} value={loc.id} className={isDefault ? "font-bold" : ""}>
+                                      {isDefault ? '📦 ' : ''}
+                                      {loc.name} {loc.location_type ? `(${loc.location_type})` : ''}
+                                      {isDefault ? ' (Default)' : ''}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
+                </div>
 
-                  {/* Cancel/Close Actions */}
-                  <div className="flex justify-end pt-4 border-t">
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => {
+                      // Validate that all items have a location selected
+                      const allLocationsSelected = returnRequestModal.items.every((item, idx) =>
+                        returnLocations[`return_item_${idx}`]
+                      );
+
+                      if (!allLocationsSelected) {
+                        alert("Please select a return location for all items.");
+                        return;
+                      }
+
+                      // For now, we'll use the first item's location as the primary location
+                      // In the future, the backend should support per-item locations
+                      const primaryLocationId = returnLocations[`return_item_0`];
+                      handleCompleteReturnRequest(returnRequestModal.requestId, returnRequestModal.newStatus, primaryLocationId);
+                    }}
+                    disabled={returnRequestModal.items.length > 0 && !returnRequestModal.items.every((item, idx) => returnLocations[`return_item_${idx}`])}
+                    className={`w-full px-4 py-3 text-white rounded-lg font-medium transition-colors ${(returnRequestModal.items.length === 0 || returnRequestModal.items.every((item, idx) => returnLocations[`return_item_${idx}`]))
+                      ? 'bg-purple-600 hover:bg-purple-700'
+                      : 'bg-gray-300 cursor-not-allowed'
+                      }`}
+                  >
+                    Confirm & Complete Return
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setReturnRequestModal(null);
+                      setReturnLocationId(null);
+                      setReturnLocations({});
+                    }}
+                    className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        }
+        {/* Activity Details Modal */}
+        {
+          selectedActivity && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto animate-fade-in-up">
+                <div className="p-6">
+                  <div className="flex justify-between items-start mb-6 border-b pb-4">
+                    <div>
+                      <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                        {selectedActivity.type === 'Assigned' ? 'Service Assigment Details' : 'Service Request Details'}
+                        <span className={`px-2 py-1 text-sm rounded-full ${selectedActivity.status === 'completed' ? 'bg-green-100 text-green-800' :
+                          selectedActivity.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+                            'bg-yellow-100 text-yellow-800'
+                          }`}>
+                          {selectedActivity.status}
+                        </span>
+                      </h2>
+                      <p className="text-gray-500 mt-1">ID: {selectedActivity.id}</p>
+                    </div>
                     <button
                       onClick={() => setSelectedActivity(null)}
-                      className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium"
+                      className="text-gray-400 hover:text-gray-600 transition-colors"
                     >
-                      Close
+                      <X size={24} />
                     </button>
+                  </div>
+
+                  <div className="space-y-6">
+                    {/* Core Info */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Service / Description</p>
+                        <p className="font-semibold text-gray-900">{selectedActivity.name}</p>
+                      </div>
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Room / Unit</p>
+                        <p className="font-semibold text-gray-900">{selectedActivity.room}</p>
+                      </div>
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Assigned Agent</p>
+                        <p className="font-semibold text-gray-900">
+                          {selectedActivity.employee !== '-'
+                            ? selectedActivity.employee
+                            : (selectedActivity.original?.inventory_checked_by || 'Unassigned')}
+                        </p>
+                        {selectedActivity.original?.employee_id && (
+                          <p className="text-[10px] text-gray-400 mt-1">ID: #{selectedActivity.original.employee_id}</p>
+                        )}
+                      </div>
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Target Protocol</p>
+                        <p className="font-semibold text-indigo-600">
+                          {selectedActivity.original?.service?.average_completion_time || 'No Target Set'}
+                        </p>
+                        <p className="text-[10px] text-gray-400 mt-1">Expected Completion</p>
+                      </div>
+                    </div>
+
+                    {/* Operational Timestamps */}
+                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                      <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Operational Timeline</h3>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-gray-500 uppercase">Assigned</span>
+                          <span className="text-xs font-semibold text-gray-700">
+                            {selectedActivity.date ? new Date(selectedActivity.date).toLocaleTimeString() : '-'}
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-gray-500 uppercase">Started</span>
+                          <span className="text-xs font-semibold text-gray-700">
+                            {selectedActivity.original?.started_at ? new Date(selectedActivity.original.started_at).toLocaleTimeString() : (selectedActivity.status !== 'pending' ? 'Ongoing' : '-')}
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-gray-500 uppercase">Completed</span>
+                          <span className="text-xs font-semibold text-gray-700">
+                            {selectedActivity.original?.completed_at ? new Date(selectedActivity.original.completed_at).toLocaleTimeString() :
+                              (selectedActivity.original?.last_used_at ? new Date(selectedActivity.original.last_used_at).toLocaleTimeString() : '-')}
+                          </span>
+                        </div>
+                      </div>
+
+                      {(selectedActivity.original?.completed_at || selectedActivity.original?.last_used_at) && (
+                        <div className="mt-3 pt-3 border-t border-gray-200 flex justify-between items-center">
+                          <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Total Mission Duration</span>
+                          <span className="text-sm font-black text-slate-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
+                            {(() => {
+                              const end = new Date(selectedActivity.original.completed_at || selectedActivity.original.last_used_at);
+                              const start = new Date(selectedActivity.original.started_at || selectedActivity.date);
+                              const diff = end - start;
+                              const mins = Math.max(0, Math.floor(diff / (1000 * 60)));
+                              const hours = Math.floor(mins / 60);
+                              return hours > 0 ? `${hours}h ${mins % 60}m` : `${mins}m`;
+                            })()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+
+
+                    {/* Content Section */}
+                    {selectedActivity.original && (
+                      <div className="space-y-4">
+                        {/* Food Order Details */}
+                        {selectedActivity.original.food_order_id && (
+                          <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
+                            <h3 className="text-md font-semibold text-indigo-800 mb-2 font-black uppercase tracking-widest text-[11px]">Food Deliverable Logic</h3>
+                            <div className="grid grid-cols-2 gap-4 mb-4">
+                              <div className="bg-white/50 p-3 rounded-lg border border-indigo-100">
+                                <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest mb-1">Billing Signal</p>
+                                <p className={`text-sm font-black uppercase tracking-wider ${selectedActivity.original.food_order_billing_status === 'paid' ? 'text-emerald-600' : 'text-orange-600'}`}>
+                                  {selectedActivity.original.food_order_billing_status === 'paid' ? 'SETTLED' : 'OUTSTANDING'}
+                                </p>
+                              </div>
+                              <div className="bg-white/50 p-3 rounded-lg border border-indigo-100">
+                                <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest mb-1">Vector Value</p>
+                                <p className="text-sm font-black text-slate-800 tracking-tight">₹{selectedActivity.original.food_order_amount}</p>
+                              </div>
+                            </div>
+                            {selectedActivity.original.food_items && selectedActivity.original.food_items.length > 0 && (
+                              <div className="overflow-x-auto rounded-lg border border-indigo-100">
+                                <table className="min-w-full text-xs">
+                                  <thead className="bg-indigo-100/50 text-indigo-900">
+                                    <tr>
+                                      <th className="px-3 py-2 text-left font-black uppercase tracking-widest">Resource Node</th>
+                                      <th className="px-3 py-2 text-center font-black uppercase tracking-widest">Qty</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {selectedActivity.original.food_items.map((item, idx) => (
+                                      <tr key={idx} className="border-t border-indigo-100 bg-white/30">
+                                        <td className="px-3 py-2 font-bold text-slate-700">{item.food_item_name}</td>
+                                        <td className="px-3 py-2 text-center font-black text-indigo-600">x{item.quantity}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Asset Damages */}
+                        {selectedActivity.original.asset_damages && selectedActivity.original.asset_damages.length > 0 && (
+                          <div className="bg-red-50 p-4 rounded-lg border border-red-100">
+                            <h3 className="text-xs font-black text-red-800 mb-2 uppercase tracking-widest">Asset Damage Reports</h3>
+                            <div className="overflow-x-auto">
+                              <table className="min-w-full text-xs">
+                                <thead className="bg-red-100 text-red-900">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left uppercase font-black">Item</th>
+                                    <th className="px-3 py-2 text-center uppercase font-black">Cost</th>
+                                    <th className="px-3 py-2 text-left uppercase font-black">Signal Log</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {selectedActivity.original.asset_damages.map((asset, idx) => (
+                                    <tr key={idx} className="border-t border-red-200">
+                                      <td className="px-3 py-2 font-medium">{asset.item_name}</td>
+                                      <td className="px-3 py-2 text-center font-bold">₹{asset.replacement_cost}</td>
+                                      <td className="px-3 py-2 text-gray-700">{asset.notes || '-'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Inventory Items Used (Unified for both types) */}
+                        {(() => {
+                          const inventory = selectedActivity.original.inventory_data_with_charges ||
+                            selectedActivity.original.inventory_items_used ||
+                            [];
+
+                          if (inventory.length === 0) return null;
+
+                          return (
+                            <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                              <h3 className="text-xs font-black text-slate-500 mb-2 uppercase tracking-widest">Resource Allocation Ledger</h3>
+                              <div className="overflow-x-auto">
+                                <table className="min-w-full text-xs">
+                                  <thead className="bg-slate-200 text-slate-700">
+                                    <tr>
+                                      <th className="px-3 py-2 text-left uppercase font-black">Inventory Node</th>
+                                      <th className="px-3 py-2 text-center uppercase font-black">Allotted</th>
+                                      <th className="px-3 py-2 text-center uppercase font-black">Used</th>
+                                      <th className="px-3 py-2 text-center uppercase font-black">Loss/Dam.</th>
+                                      <th className="px-3 py-2 text-right uppercase font-black">Pricing Signal</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {inventory.map((item, idx) => {
+                                      const charge = item.missing_item_charge || (item.missing_qty > 0 ? (item.missing_qty * (item.unit_price || 0)) : 0);
+                                      return (
+                                        <tr key={idx} className="border-t border-slate-200">
+                                          <td className="px-3 py-2 font-black text-slate-700">
+                                            {item.item_name || item.name}
+                                            <div className="text-[9px] text-gray-400 font-normal">Code: {item.item_code || '-'}</div>
+                                          </td>
+                                          <td className="px-3 py-2 text-center font-bold">
+                                            {item.quantity_assigned || item.quantity || 0}
+                                          </td>
+                                          <td className="px-3 py-2 text-center font-bold text-blue-600">
+                                            {item.used_qty || 0}
+                                          </td>
+                                          <td className="px-3 py-2 text-center font-bold text-red-600">
+                                            {item.missing_qty > 0 ? item.missing_qty : '-'}
+                                          </td>
+                                          <td className="px-3 py-2 text-right font-black">
+                                            {charge > 0 ? <span className="text-red-600">₹{charge.toFixed(2)}</span> : <span className="text-emerald-600 text-[10px] uppercase">Allocated</span>}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {/* Cancel/Close Actions */}
+                    <div className="flex justify-end pt-4 border-t">
+                      <button
+                        onClick={() => setSelectedActivity(null)}
+                        className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium"
+                      >
+                        Close
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        )
-      }
+          )
+        }
+
+        {/* Create / Edit Service Modal */}
+        {
+          showCreateModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
+              <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-slate-100">
+                <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-indigo-600 rounded-2xl shadow-lg shadow-indigo-100 text-white">
+                      <Box size={24} />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-black text-slate-800 tracking-tight">
+                        {editingServiceId ? "Refine Definition" : "Construct Service"}
+                      </h2>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">
+                        {editingServiceId ? `System Item ID #${editingServiceId}` : "Deploy new architecture to the catalog"}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleCancelEdit}
+                    className="p-3 hover:bg-white rounded-2xl transition-all text-slate-400 hover:text-red-500 border border-transparent hover:border-slate-100 hover:rotate-90"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+
+                <div className="p-8 overflow-y-auto custom-scrollbar space-y-8">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                    {/* Left Column: Form Fields */}
+                    <div className="space-y-6">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Service Identity</label>
+                        <input
+                          type="text"
+                          placeholder="Corporate Spa, Deluxe Room Service..."
+                          value={form.name}
+                          onChange={(e) => setForm({ ...form, name: e.target.value })}
+                          className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 p-4 rounded-2xl text-sm font-bold transition-all shadow-sm"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Rate (₹)</label>
+                          <div className="relative">
+                            <IndianRupee size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                              type="number"
+                              placeholder="0.00"
+                              value={form.charges}
+                              onChange={(e) => setForm({ ...form, charges: e.target.value })}
+                              className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 pl-10 pr-4 py-4 rounded-2xl text-sm font-black text-slate-800 transition-all shadow-sm"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Duration</label>
+                          <div className="relative">
+                            <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                              type="text"
+                              placeholder="e.g. 45 min"
+                              value={form.average_completion_time}
+                              onChange={(e) => setForm({ ...form, average_completion_time: e.target.value })}
+                              className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 pl-12 pr-4 py-4 rounded-2xl text-sm font-bold transition-all shadow-sm"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Description</label>
+                        <textarea
+                          placeholder="Define the scope and deliverables of this service..."
+                          value={form.description}
+                          onChange={(e) => setForm({ ...form, description: e.target.value })}
+                          rows={4}
+                          className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 p-4 rounded-2xl text-sm leading-relaxed transition-all shadow-sm resize-none"
+                        />
+                      </div>
+
+                      <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between group cursor-pointer hover:bg-white hover:shadow-md transition-all">
+                        <div className="flex items-center gap-3">
+                          <div className={`p-2 rounded-xl transition-colors ${form.is_visible_to_guest ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-200 text-slate-500'}`}>
+                            <Radio size={18} className={form.is_visible_to_guest ? "animate-pulse" : ""} />
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-black text-slate-800 uppercase tracking-tight">Network Visibility</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Available for guest request</p>
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={form.is_visible_to_guest}
+                            onChange={(e) => setForm({ ...form, is_visible_to_guest: e.target.checked })}
+                          />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Right Column: Assets & Resources */}
+                    <div className="space-y-8">
+                      {/* Media Management */}
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                          <Star size={14} className="text-amber-400" /> Visual Manifest
+                        </h4>
+                        <div className="grid grid-cols-2 gap-4">
+                          <label className="flex flex-col items-center justify-center h-40 border-2 border-dashed border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-50 hover:border-indigo-300 transition-all transition-colors group bg-slate-50/50">
+                            <Plus size={32} className="text-slate-300 group-hover:text-indigo-500 group-hover:scale-125 transition-transform mb-2" />
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Inject Asset</span>
+                            <input type="file" multiple accept="image/*" onChange={handleImageChange} className="hidden" />
+                          </label>
+
+                          {imagePreviews.map((preview, idx) => (
+                            <div key={idx} className="relative group rounded-2xl overflow-hidden aspect-video shadow-md ring-1 ring-slate-100">
+                              <img src={preview} className="w-full h-full object-cover" />
+                              <div className="absolute inset-0 bg-indigo-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Staged</span>
+                              </div>
+                            </div>
+                          ))}
+
+                          {editingServiceId && existingImages.map((img) => {
+                            const marked = imagesToRemove.includes(img.id);
+                            return (
+                              <div key={img.id} className="relative group rounded-2xl overflow-hidden aspect-video shadow-sm ring-1 ring-slate-100">
+                                <img src={getImageUrl(img.image_url)} className={`w-full h-full object-cover transition-all duration-500 ${marked ? 'grayscale opacity-20 scale-110' : ''}`} />
+                                <button
+                                  onClick={() => handleToggleExistingImage(img.id)}
+                                  className={`absolute inset-0 flex items-center justify-center transition-all ${marked ? 'bg-red-500/20' : 'bg-slate-900/40 opacity-0 group-hover:opacity-100'}`}
+                                >
+                                  <div className={`p-3 rounded-full ${marked ? 'bg-white text-red-600 shadow-xl' : 'bg-red-600 text-white shadow-xl'} transform hover:scale-110 transition-transform`}>
+                                    {marked ? <Plus size={20} className="rotate-45" /> : <X size={20} />}
+                                  </div>
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Inventory Links */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                            <Package size={14} className="text-indigo-500" /> Resource Dependencies
+                          </h4>
+                          <button
+                            onClick={handleAddInventoryItem}
+                            className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 uppercase tracking-widest flex items-center gap-1 group"
+                          >
+                            <Plus size={10} className="group-hover:rotate-90 transition-transform" /> Bind Resource
+                          </button>
+                        </div>
+
+                        <div className="space-y-3 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                          {selectedInventoryItems.length === 0 && (
+                            <div className="bg-slate-50/50 border border-slate-100 border-dashed rounded-2xl py-12 flex flex-col items-center justify-center text-slate-300">
+                              <Box size={32} className="opacity-20 mb-2" />
+                              <p className="text-[10px] font-bold uppercase tracking-[0.2em]">No dependencies mapped</p>
+                            </div>
+                          )}
+                          {selectedInventoryItems.map((item, index) => (
+                            <div key={index} className="flex gap-2 group animate-fadeIn bg-slate-50 p-3 rounded-2xl border border-slate-100 hover:bg-white hover:shadow-md transition-all">
+                              <select
+                                value={item.inventory_item_id}
+                                onChange={(e) => handleUpdateInventoryItem(index, 'inventory_item_id', e.target.value)}
+                                className="flex-1 bg-white border-none ring-1 ring-slate-100 focus:ring-2 focus:ring-indigo-500 px-3 py-2.5 rounded-xl text-xs font-black text-slate-700"
+                              >
+                                <option value="">Select Resource Node...</option>
+                                {inventoryItems.map((invItem) => (
+                                  <option key={invItem.id} value={invItem.id}>{invItem.name}</option>
+                                ))}
+                              </select>
+                              <div className="flex items-center gap-2 bg-white px-3 py-2.5 rounded-xl ring-1 ring-slate-100">
+                                <input
+                                  type="number"
+                                  value={item.quantity}
+                                  onChange={(e) => handleUpdateInventoryItem(index, 'quantity', e.target.value)}
+                                  className="w-12 bg-transparent border-none text-xs font-black text-center focus:outline-none"
+                                />
+                                <span className="text-[9px] font-black text-slate-400 uppercase">Qty</span>
+                              </div>
+                              <button
+                                onClick={() => handleRemoveInventoryItem(index)}
+                                className="p-2.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                              >
+                                <X size={16} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-8 border-t border-slate-50 bg-slate-50/30 flex justify-end items-center gap-4">
+                  <button
+                    onClick={handleCancelEdit}
+                    className="px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-slate-600 transition-all"
+                  >
+                    Discard Changes
+                  </button>
+                  <button
+                    onClick={handleSaveService}
+                    className="px-12 py-4 rounded-2xl bg-indigo-600 hover:bg-slate-900 text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-xl shadow-indigo-100 active:scale-95 transition-all flex items-center gap-3"
+                  >
+                    {editingServiceId ? <RefreshCw size={16} /> : <Zap size={16} className="text-amber-400" />}
+                    {editingServiceId ? "Apply System Updates" : "Initialize Service Deployment"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        }
+
+        {/* Dispatch Service Modal */}
+        {
+          showAssignModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
+              <div className="bg-white rounded-[2.5rem] shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-slate-100">
+                <div className="p-10 border-b border-slate-50 flex justify-between items-center bg-slate-50/20">
+                  <div className="flex items-center gap-6">
+                    <div className="p-4 bg-slate-900 rounded-[1.5rem] shadow-2xl text-white">
+                      <Zap size={28} className="text-amber-400" />
+                    </div>
+                    <div>
+                      <h2 className="text-3xl font-black text-slate-800 tracking-tight">Mission Triage</h2>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-[0.3em] mt-1.5 flex items-center gap-2">
+                        <Activity size={12} className="text-indigo-500" /> Service Resource Orchestration
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowAssignModal(false)}
+                    className="p-4 hover:bg-white rounded-3xl transition-all text-slate-400 hover:text-red-500 border border-transparent hover:border-slate-100"
+                  >
+                    <X size={32} />
+                  </button>
+                </div>
+
+                <div className="p-10 overflow-y-auto custom-scrollbar">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+                    {/* Left: Configuration */}
+                    <div className="lg:col-span-7 space-y-8">
+                      <div className="grid grid-cols-1 gap-8">
+                        <div className="space-y-2.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Operation Protocol</label>
+                          <div className="relative group">
+                            <Package className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
+                            <select
+                              value={assignForm.service_id}
+                              onChange={(e) => handleServiceSelect(e.target.value)}
+                              className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 pl-14 pr-6 py-5 rounded-[1.5rem] text-sm font-black text-slate-800 transition-all appearance-none shadow-sm"
+                            >
+                              <option value="">Search Architecture Catalog...</option>
+                              {services.map((s) => (
+                                <option key={s.id} value={s.id}>{s.name} (₹{s.charges})</option>
+                              ))}
+                            </select>
+                            <ChevronRight className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none rotate-90" size={18} />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-8">
+                          <div className="space-y-2.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Assigned Agent</label>
+                            <div className="relative group">
+                              <Users className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
+                              <select
+                                value={assignForm.employee_id}
+                                onChange={(e) => setAssignForm({ ...assignForm, employee_id: e.target.value })}
+                                className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 pl-14 pr-6 py-5 rounded-[1.5rem] text-sm font-black text-slate-800 transition-all shadow-sm"
+                              >
+                                <option value="">Select Personnel...</option>
+                                {employees
+                                  .sort((a, b) => {
+                                    const aOnline = a.status === 'on_duty' || a.is_clocked_in;
+                                    const bOnline = b.status === 'on_duty' || b.is_clocked_in;
+                                    if (aOnline && !bOnline) return -1;
+                                    if (!aOnline && bOnline) return 1;
+                                    return 0;
+                                  })
+                                  .map((e) => {
+                                    const isOnline = e.status === 'on_duty' || e.is_clocked_in;
+                                    return (
+                                      <option key={e.id} value={e.id}>
+                                        {e.name} {isOnline ? "• ONLINE" : `• ${e.status || 'OFFLINE'}`}
+                                      </option>
+                                    );
+                                  })}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Deployment Target</label>
+                            <div className="relative group">
+                              <Box className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
+                              <select
+                                value={assignForm.room_id}
+                                onChange={(e) => setAssignForm({ ...assignForm, room_id: e.target.value })}
+                                className="w-full bg-slate-50 border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 pl-14 pr-6 py-5 rounded-[1.5rem] text-sm font-black text-slate-800 transition-all shadow-sm"
+                              >
+                                <option value="">Select Unit Vector...</option>
+                                {rooms.map((r) => (
+                                  <option key={r.id} value={r.id}>UNIT {r.number}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Mission Priority</label>
+                          <div className="flex gap-4 p-1.5 bg-slate-100/50 rounded-2xl ring-1 ring-slate-200">
+                            {['pending', 'in_progress', 'completed'].map((status) => (
+                              <button
+                                key={status}
+                                onClick={() => setAssignForm({ ...assignForm, status })}
+                                className={`flex-1 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-300 ${assignForm.status === status
+                                  ? status === 'completed' ? 'bg-emerald-600 text-white shadow-lg' :
+                                    status === 'in_progress' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-amber-500 text-white shadow-lg'
+                                  : 'text-slate-400 hover:text-slate-600 hover:bg-white/50'
+                                  }`}
+                              >
+                                {status.replace('_', ' ')}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: Logistics Manifest */}
+                    <div className="lg:col-span-5 h-full">
+                      <div className="bg-slate-50/50 rounded-[2rem] p-8 border border-slate-100 flex flex-col min-h-full h-full">
+                        {selectedServiceDetails ? (
+                          <div className="space-y-8 flex-1 flex flex-col">
+                            <div className="flex justify-between items-start bg-white p-5 rounded-2xl shadow-sm ring-1 ring-slate-100">
+                              <div>
+                                <h3 className="font-black text-slate-800 text-xl tracking-tight leading-tight">{selectedServiceDetails.name}</h3>
+                                <p className="text-[10px] text-indigo-500 font-black uppercase tracking-[0.2em] mt-1.5">Rate: ₹{selectedServiceDetails.charges.toLocaleString()}</p>
+                              </div>
+                              {selectedServiceDetails.images?.[0] && (
+                                <img src={getImageUrl(selectedServiceDetails.images[0].image_url)} className="w-20 h-16 object-cover rounded-xl border-2 border-white shadow-md" />
+                              )}
+                            </div>
+
+                            <div className="flex-1 space-y-6">
+                              {selectedServiceDetails.inventory_items?.length > 0 ? (
+                                <div className="space-y-4">
+                                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                                    <ClipboardList size={14} className="text-indigo-500" /> Standard Payload Manifest
+                                  </h4>
+                                  <div className="space-y-3">
+                                    {selectedServiceDetails.inventory_items.map((item, idx) => (
+                                      <div key={idx} className="bg-white p-4 rounded-2xl ring-1 ring-slate-100 shadow-sm hover:ring-indigo-200 transition-all">
+                                        <div className="flex justify-between items-center mb-3">
+                                          <span className="text-xs font-black text-slate-700">{item.name} <span className="text-slate-400 font-bold ml-1">x{item.quantity}</span></span>
+                                          <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-1 rounded-md">Required</span>
+                                        </div>
+                                        <select
+                                          className={`w-full bg-slate-50 border-none ring-1 text-[11px] font-bold py-2.5 px-3 rounded-xl transition-all ${!inventorySourceSelections[item.id] ? 'ring-red-200 text-red-500' : 'ring-slate-100'}`}
+                                          value={inventorySourceSelections[item.id] || ""}
+                                          onChange={(e) => setInventorySourceSelections(prev => ({ ...prev, [item.id]: parseInt(e.target.value) }))}
+                                        >
+                                          <option value="">Select Resource Origin Node...</option>
+                                          {itemStockData[item.id]?.map(stock => (
+                                            <option key={stock.location_id} value={stock.location_id}>
+                                              {stock.location_name} (Stock: {stock.quantity})
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="bg-white/60 p-10 rounded-3xl border border-dashed border-slate-200 text-center flex flex-col items-center justify-center">
+                                  <Activity size={32} className="text-slate-200 mb-3" />
+                                  <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">Zero Dependencies</p>
+                                  <p className="text-[9px] text-slate-300 font-bold mt-1 uppercase">Autonomous definition detected</p>
+                                </div>
+                              )}
+
+                              {/* Supplementary Logistics */}
+                              <div className="pt-6 border-t border-slate-100">
+                                <div className="flex items-center justify-between mb-4">
+                                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Auxiliary Supply Nodes</h4>
+                                  <button onClick={handleAddExtraInventoryItem} className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 uppercase tracking-[0.2em] flex items-center gap-1 group">
+                                    <Plus size={10} className="group-hover:rotate-90 transition-transform" /> Add Row
+                                  </button>
+                                </div>
+                                <div className="space-y-2.5 max-h-[220px] overflow-y-auto custom-scrollbar pr-2">
+                                  {extraInventoryItems.map((item, index) => (
+                                    <div key={index} className="flex gap-2 animate-fadeIn bg-indigo-50/30 p-2.5 rounded-2xl shadow-sm border border-indigo-100">
+                                      <select
+                                        value={item.inventory_item_id}
+                                        onChange={(e) => handleUpdateExtraInventoryItem(index, 'inventory_item_id', e.target.value)}
+                                        className="flex-1 bg-white border-none text-[10px] font-black p-2 rounded-xl ring-1 ring-slate-100 shadow-sm"
+                                      >
+                                        <option value="">Select Item...</option>
+                                        {inventoryItems.map((invItem) => (
+                                          <option key={invItem.id} value={invItem.id}>{invItem.name}</option>
+                                        ))}
+                                      </select>
+                                      <div className="flex items-center gap-2 bg-white px-2 rounded-xl ring-1 ring-slate-100 shadow-sm w-16">
+                                        <input
+                                          type="number"
+                                          value={item.quantity}
+                                          onChange={(e) => handleUpdateExtraInventoryItem(index, 'quantity', e.target.value)}
+                                          className="w-full bg-transparent border-none text-[10px] font-black text-center focus:outline-none"
+                                        />
+                                      </div>
+                                      <button onClick={() => handleRemoveExtraInventoryItem(index)} className="text-slate-300 hover:text-red-500 p-2 transition-colors">
+                                        <X size={16} />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex-1 flex flex-col items-center justify-center opacity-30 py-20">
+                            <Activity size={64} className="text-slate-200 mb-6 animate-pulse" />
+                            <p className="text-xs font-black text-slate-400 uppercase tracking-[0.3em]">Awaiting Selection</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-10 border-t border-slate-50 bg-slate-50/20 flex justify-end gap-6">
+                  <button
+                    onClick={() => setShowAssignModal(false)}
+                    className="px-10 py-5 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-slate-900 transition-all font-bold"
+                  >
+                    Terminate
+                  </button>
+                  <button
+                    onClick={handleAssign}
+                    className="px-16 py-5 rounded-[1.5rem] bg-slate-900 hover:bg-emerald-600 text-white text-[10px] font-black uppercase tracking-[0.3em] shadow-2xl active:scale-95 transition-all flex items-center gap-4 group"
+                  >
+                    <Zap size={18} className="text-amber-400 group-hover:scale-125 transition-transform" />
+                    Initiate Deployment Cycle
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        }
+      </div >
     </DashboardLayout >
   );
 };

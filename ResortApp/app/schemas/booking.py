@@ -1,6 +1,6 @@
 from pydantic import BaseModel, validator, field_validator, model_validator
 from typing import List, Optional
-from datetime import date
+from datetime import date, datetime
 from .user import UserOut
 
 # This schema is used for displaying Room details within a Booking
@@ -75,7 +75,10 @@ class BookingOut(BaseModel):
     preferences: Optional[str] = None
     payments: List[object] = []
     # ----------------------------------------------------
+    payments: List[object] = []
+    # ----------------------------------------------------
     rooms: List[RoomOut] = []
+    created_at: Optional[datetime] = None # Added for sorting
     
     # Detailed arrays
     food_orders: List[object] = []

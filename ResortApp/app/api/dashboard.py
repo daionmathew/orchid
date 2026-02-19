@@ -644,13 +644,13 @@ def get_summary(
                     )
                     fixed_assets = fixed_assets_query.scalar() or 0
                     
-                    # High-value items (likely assets even if not marked) - e.g., Fridge worth ₹499,999
+                    # High-value items (likely assets even if not marked) - e.g., Fridge worth Rs.499,999
                     high_value_query = db.query(
                         func.sum(func.abs(InventoryItem.current_stock) * InventoryItem.unit_price)
                     ).join(InventoryCategory).filter(
                         InventoryCategory.parent_department == dept,
                         InventoryItem.is_asset_fixed == False,
-                        InventoryItem.unit_price >= 10000,  # Items worth ₹10,000+ are likely assets
+                        InventoryItem.unit_price >= 10000,  # Items worth Rs.10,000+ are likely assets
                         InventoryItem.current_stock != 0
                     )
                     high_value_assets = high_value_query.scalar() or 0

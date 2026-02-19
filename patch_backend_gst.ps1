@@ -1,5 +1,5 @@
 $pem = "$env:USERPROFILE\.ssh\gcp_key"
-$remote = "basilabrahamaby@136.113.93.47"
+$remote = "basilabrahamaby@34.30.59.169"
 $localFile = "ResortApp\app\api\gst_reports.py"
 $remotePath = "/home/basilabrahamaby/resort_app/app/api/gst_reports.py"
 

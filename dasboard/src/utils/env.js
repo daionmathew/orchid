@@ -36,7 +36,7 @@ export const getMediaBaseUrl = () => {
     return `${window.location.origin}/inventory`;
   }
   if (typeof window !== "undefined" && isOrchidDeployment()) {
-    return `${window.location.origin}/orchidfiles`;
+    return `${window.location.origin}/orchidapi`;
   }
   if (typeof window !== "undefined" && isPommaDeployment()) {
     return `${window.location.origin}/pomma`;

@@ -5,6 +5,7 @@ import { LineChart, Line, Tooltip, ResponsiveContainer } from "recharts";
 import CountUp from "react-countup";
 import { useInfiniteScroll } from "./useInfiniteScroll";
 import { getMediaBaseUrl } from "../utils/env";
+import { formatDateShort } from "../utils/dateUtils";
 
 const Expenses = () => {
   const [expenses, setExpenses] = useState([]);
@@ -319,7 +320,7 @@ const Expenses = () => {
                       )}
                     </td>
                     <td className="p-2 text-green-600 font-semibold">₹{exp.amount}</td>
-                    <td className="p-2">{exp.date.includes("T") ? exp.date.split("T")[0] : exp.date}</td>
+                    <td className="p-2">{formatDateShort(exp.date)}</td>
                     <td className="p-2">{exp.description}</td>
                     <td className="p-2">
                       {exp.image && (

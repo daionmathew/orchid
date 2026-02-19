@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
+from app.schemas.foodorder import FoodOrderItemOut
 
 class ServiceRequestCreate(BaseModel):
     food_order_id: Optional[int] = None  # Nullable for cleaning/other non-food requests
@@ -15,6 +16,7 @@ class ServiceRequestUpdate(BaseModel):
     employee_id: Optional[int] = None
     description: Optional[str] = None
     billing_status: Optional[str] = None  # "paid" or "unpaid" for food orders
+    return_location_id: Optional[int] = None # Location to return items to (e.g., Warehouse, Laundry)
 
 class ServiceRequestOut(BaseModel):
     id: int
@@ -25,12 +27,16 @@ class ServiceRequestOut(BaseModel):
     description: Optional[str] = None
     status: str
     created_at: datetime
+    started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     image_path: Optional[str] = None
     food_order_amount: Optional[float] = None
     food_order_status: Optional[str] = None
     room_number: Optional[str] = None
     employee_name: Optional[str] = None
+    food_order_billing_status: Optional[str] = None
+    food_items: Optional[List[FoodOrderItemOut]] = None
+    service: Optional[dict] = None # Optional nested service details
     
     model_config = ConfigDict(from_attributes=True)
 

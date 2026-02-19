@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
+from datetime import datetime
 
 class FoodOrderItemCreate(BaseModel):
     food_item_id: int
@@ -8,11 +9,14 @@ class FoodOrderItemCreate(BaseModel):
 class FoodOrderCreate(BaseModel):
     room_id: int
     amount: float
-    assigned_employee_id: int
+    assigned_employee_id: Optional[int] = None
     items: List[FoodOrderItemCreate]
+    status: Optional[str] = "pending"
     billing_status: Optional[str] = "unbilled"
     order_type: Optional[str] = "dine_in"  # "dine_in" or "room_service"
     delivery_request: Optional[str] = None  # Delivery request/notes for room service 
+    booking_id: Optional[int] = None
+    package_booking_id: Optional[int] = None
 
 class FoodOrderItemOut(BaseModel):
     id: int
@@ -38,6 +42,9 @@ class FoodOrderOut(BaseModel):
     creator_name: Optional[str] = None  # Populated from creator relationship
     chef_name: Optional[str] = None  # Populated from chef relationship
     room_number: Optional[str] = None  # Populated from room relationship
+    created_at: Optional[datetime] = None
+    booking_id: Optional[int] = None
+    package_booking_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

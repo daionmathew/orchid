@@ -32,6 +32,7 @@ class CheckoutRequest(Base):
     inventory_data = Column(JSON, nullable=True)  # Stores verified inventory items (used/missing)
     
     # Completion
+    started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     
     # Link to checkout after approval
@@ -42,6 +43,8 @@ class CheckoutRequest(Base):
     
     # Relationships
     employee = relationship("Employee", foreign_keys=[employee_id])
+    booking = relationship("Booking", foreign_keys=[booking_id])
+    package_booking = relationship("PackageBooking", foreign_keys=[package_booking_id])
 
 
 class CheckoutVerification(Base):
@@ -111,6 +114,7 @@ class Checkout(Base):
     # Enhanced fields
     late_checkout_fee = Column(Float, default=0.0)
     consumables_charges = Column(Float, default=0.0)  # Total from consumables audit
+    inventory_charges = Column(Float, default=0.0)    # Total from rentals
     asset_damage_charges = Column(Float, default=0.0)  # Total from asset damages
     key_card_fee = Column(Float, default=0.0)
     advance_deposit = Column(Float, default=0.0)  # Advance paid during booking
@@ -132,6 +136,7 @@ class Checkout(Base):
     booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=True, unique=True)
     package_booking_id = Column(Integer, ForeignKey("package_bookings.id"), nullable=True, unique=True)
     payment_status = Column(String) 
+    notes = Column(Text, nullable=True) # General notes for the checkout record
 
     booking = relationship("Booking", back_populates="checkout", uselist=False)
     package_booking = relationship("PackageBooking", back_populates="checkout", uselist=False)

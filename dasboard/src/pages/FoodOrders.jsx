@@ -5,8 +5,10 @@ import api from "../services/api";
 import API from "../services/api";
 import { Bar, Line } from "react-chartjs-2";
 import "chart.js/auto";
-import { ChefHat, X, Package, Home, UtensilsCrossed, Truck } from "lucide-react";
+import { ChefHat, X, Package, Home, UtensilsCrossed, Truck, CreditCard, CheckCircle, XCircle } from "lucide-react";
+import CountUp from "react-countup";
 import { toast } from "react-hot-toast";
+import { getImageUrl } from "../utils/imageUtils";
 import { getMediaBaseUrl } from "../utils/env";
 import { formatDateTimeIST, formatDateIST } from "../utils/dateUtils";
 import { normalizeQuantity } from "../utils/quantityValidation";
@@ -85,6 +87,7 @@ export default function FoodOrders() {
   const [deliveryRequestText, setDeliveryRequestText] = useState("");
   const [showCompleteModal, setShowCompleteModal] = useState(null);
   const [paymentStatus, setPaymentStatus] = useState("unpaid");
+  const [paymentFilter, setPaymentFilter] = useState("");
 
   // Food Management states (from FoodCategory.jsx)
   const [isLoading, setIsLoading] = useState(false);
@@ -129,12 +132,7 @@ export default function FoodOrders() {
   const token = localStorage.getItem("token");
 
   // Helper function for image URLs
-  const getImageUrl = (imagePath) => {
-    if (!imagePath) return 'https://placehold.co/400x300/e2e8f0/a0aec0?text=No+Image';
-    if (imagePath.startsWith('http')) return imagePath;
-    const baseUrl = getMediaBaseUrl();
-    return imagePath.startsWith('/') ? `${baseUrl}${imagePath}` : `${baseUrl}/${imagePath}`;
-  };
+  // Utility moved to utils/imageUtils.js
 
   // KPI Card component
   const KpiCard = ({ title, value, icon, color }) => (
@@ -975,7 +973,7 @@ export default function FoodOrders() {
         const isActiveBooking = (status) => {
           if (!status) return false;
           const normalized = status.toLowerCase().replace(/[-_\s]/g, '');
-          return (normalized === 'checkedin' || normalized === 'booked') &&
+          return (normalized === 'checkedin' || normalized === 'booked' || normalized === 'occupied') &&
             normalized !== 'cancelled' &&
             !normalized.includes('checkedout');
         };
@@ -989,7 +987,12 @@ export default function FoodOrders() {
               checkInDate.setHours(0, 0, 0, 0);
               checkOutDate.setHours(0, 0, 0, 0);
 
-              if (checkInDate <= today && checkOutDate >= today) {
+              const normalizedStatus = normalizeStatus(booking.status);
+
+              // If checked-in, we are more lenient with dates (handle overstays)
+              const isActuallyCheckedIn = normalizedStatus === 'checkedin';
+
+              if ((checkInDate <= today && checkOutDate >= today) || isActuallyCheckedIn) {
                 if (booking.rooms && Array.isArray(booking.rooms)) {
                   booking.rooms.forEach(room => {
                     if (room && room.id) checkedInRoomIds.add(room.id);
@@ -1011,7 +1014,10 @@ export default function FoodOrders() {
               checkInDate.setHours(0, 0, 0, 0);
               checkOutDate.setHours(0, 0, 0, 0);
 
-              if (checkInDate <= today && checkOutDate >= today) {
+              const normalizedStatus = normalizeStatus(booking.status);
+              const isActuallyCheckedIn = normalizedStatus === 'checkedin';
+
+              if ((checkInDate <= today && checkOutDate >= today) || isActuallyCheckedIn) {
                 if (booking.rooms && Array.isArray(booking.rooms)) {
                   booking.rooms.forEach(roomLink => {
                     const room = roomLink.room || roomLink;
@@ -1026,7 +1032,7 @@ export default function FoodOrders() {
           }
         });
 
-        // Also check room status directly
+        // Also check room status directly as a reliable fallback
         allRooms.forEach(room => {
           const roomStatusNormalized = normalizeStatus(room.status);
           if (roomStatusNormalized === 'checkedin' ||
@@ -1037,7 +1043,12 @@ export default function FoodOrders() {
           }
         });
 
-        const checkedInRooms = allRooms.filter(room => checkedInRoomIds.has(room.id));
+        const checkedInRooms = allRooms.filter(room => {
+          const roomStatusNormalized = normalizeStatus(room.status);
+          return checkedInRoomIds.has(room.id) ||
+            roomStatusNormalized === 'checkedin' ||
+            roomStatusNormalized === 'occupied';
+        });
         setRooms(checkedInRooms);
       } catch (roomFilterError) {
         console.error("Error during room filtering:", roomFilterError);
@@ -1216,6 +1227,27 @@ export default function FoodOrders() {
     }
   };
 
+  const handleTogglePaymentStatus = async (order) => {
+    const newBillingStatus = order.billing_status === "paid" ? "unpaid" : "paid";
+    try {
+      // Optimistic update
+      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, billing_status: newBillingStatus } : o));
+
+      await api.put(`/food-orders/${order.id}`, {
+        billing_status: newBillingStatus
+      });
+      toast.success(`Order marked as ${newBillingStatus}`);
+      fetchOrders();
+      if (activeTab === "dashboard") {
+        fetchAllOrdersForDashboard();
+      }
+    } catch (error) {
+      console.error("Failed to update billing status:", error);
+      toast.error("Failed to update billing status.");
+      fetchOrders(); // Revert
+    }
+  };
+
   const handleRaiseDeliveryRequest = (order) => {
     setShowDeliveryRequestModal(order.id);
     setDeliveryRequestText(order.delivery_request || "");
@@ -1375,7 +1407,10 @@ export default function FoodOrders() {
   const filteredOrders = orders.filter((order) => {
     const matchStatus = statusFilter ? order.status === statusFilter : true;
     const matchDate = dateFilter ? order.created_at?.startsWith(dateFilter) : true;
-    return matchStatus && matchDate;
+    const matchPayment = paymentFilter ? (
+      paymentFilter === "paid" ? order.billing_status === "paid" : order.billing_status !== "paid"
+    ) : true;
+    return matchStatus && matchDate && matchPayment;
   }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   // Food Management calculations
@@ -2185,12 +2220,25 @@ export default function FoodOrders() {
                     className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   />
                 </div>
-                {(statusFilter || dateFilter) && (
+                <div className="flex-1 min-w-[200px]">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Payment</label>
+                  <select
+                    value={paymentFilter}
+                    onChange={(e) => setPaymentFilter(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-black"
+                  >
+                    <option value="">All Payment Status</option>
+                    <option value="paid">Paid</option>
+                    <option value="unpaid">Unpaid</option>
+                  </select>
+                </div>
+                {(statusFilter || dateFilter || paymentFilter) && (
                   <div className="flex items-end">
                     <button
                       onClick={() => {
                         setStatusFilter("");
                         setDateFilter("");
+                        setPaymentFilter("");
                       }}
                       className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors text-sm font-medium"
                     >
@@ -2218,8 +2266,9 @@ export default function FoodOrders() {
                 ) : (
                   filteredOrders.map((order) => {
                     const roomData = rooms.find((r) => r.id === order.room_id);
-                    // Normalize 'active' status to 'pending' for UI display
-                    const normalizedStatus = order.status === 'active' ? 'pending' : order.status;
+                    // Normalize status to lowercase for robust matching
+                    const rawStatus = (order.status || "").toLowerCase().trim();
+                    const normalizedStatus = rawStatus === 'active' ? 'pending' : rawStatus;
                     return (
                       <div
                         key={order.id}
@@ -2244,6 +2293,17 @@ export default function FoodOrders() {
                             >
                               {order.order_type === "room_service" ? "Room Service" : "Dine In"}
                             </span>
+                            {normalizedStatus !== "cancelled" && (
+                              <span
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1 shadow-sm border ${order.billing_status === "paid"
+                                  ? "bg-emerald-500 text-white border-emerald-600"
+                                  : "bg-red-600 text-white border-red-700"
+                                  }`}
+                              >
+                                {order.billing_status === "paid" ? <CheckCircle size={10} /> : <XCircle size={10} />}
+                                {order.billing_status === "paid" ? "PAID" : "UNPAID"}
+                              </span>
+                            )}
                             <span
                               className={`px-2.5 py-1 rounded-full text-xs font-semibold ${statusColors[normalizedStatus] || "bg-gray-100 text-gray-800"
                                 }`}
@@ -2313,11 +2373,15 @@ export default function FoodOrders() {
                           </ul>
                         </div>
 
-                        {/* Amount */}
-                        <div className="mb-3 p-2 bg-gray-50 rounded-lg">
+                        <div className="mb-3 p-2 bg-gray-50 rounded-lg border border-gray-100">
                           <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium text-gray-700">Order Total:</span>
-                            <span className="text-lg font-bold text-indigo-600">₹{parseFloat(order.amount || 0).toLocaleString('en-IN')}</span>
+                            <div className="flex flex-col">
+                              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Order Total</span>
+                              <span className={`text-[10px] font-black uppercase ${order.billing_status === 'paid' ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {order.billing_status === 'paid' ? 'Settled' : 'Unpaid - Due'}
+                              </span>
+                            </div>
+                            <span className="text-xl font-bold text-indigo-600">₹{parseFloat(order.amount || 0).toLocaleString('en-IN')}</span>
                           </div>
                         </div>
                         {/* Cost and Profit (Estimated Cost for all orders) */}
@@ -2366,6 +2430,20 @@ export default function FoodOrders() {
                             <ChefHat size={16} />
                             View Ingredients
                           </button>
+
+                          {normalizedStatus === "completed" && (
+                            <button
+                              onClick={() => handleTogglePaymentStatus(order)}
+                              className={`w-full text-sm font-medium px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 border ${order.billing_status === "paid"
+                                ? "bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                }`}
+                            >
+                              <CreditCard size={16} />
+                              Mark as {order.billing_status === "paid" ? "Unpaid" : "Paid"}
+                            </button>
+                          )}
+
                           <select
                             value={normalizedStatus}
                             onChange={(e) => handleStatusChange(order.id, e.target.value)}
@@ -2785,8 +2863,18 @@ export default function FoodOrders() {
                             {request.food_order ? (
                               <div>
                                 <div className="font-medium">Order #{request.food_order.id}</div>
-                                <div className="text-gray-500 text-xs">
+                                {request.food_order.items && request.food_order.items.length > 0 && (
+                                  <div className="text-gray-600 text-[10px] leading-tight mt-1">
+                                    {request.food_order.items.map(item => `${item.food_item_name} (x${item.quantity})`).join(", ")}
+                                  </div>
+                                )}
+                                <div className="text-gray-500 text-xs mt-1 flex items-center gap-2">
                                   ₹{request.food_order.amount || request.food_order_amount || "0"}
+                                  {request.food_order.billing_status && (
+                                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${request.food_order.billing_status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                      {request.food_order.billing_status === 'paid' ? 'Paid' : 'Unpaid'}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             ) : (
@@ -2810,7 +2898,9 @@ export default function FoodOrders() {
                                   ? "bg-blue-100 text-blue-800"
                                   : request.status === "completed"
                                     ? "bg-green-100 text-green-800"
-                                    : "bg-red-100 text-red-800"
+                                    : request.status === "scheduled"
+                                      ? "bg-purple-100 text-purple-800"
+                                      : "bg-red-100 text-red-800"
                                 }`}
                             >
                               {request.status?.replace("_", " ").toUpperCase() || "PENDING"}

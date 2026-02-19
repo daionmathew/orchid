@@ -78,6 +78,13 @@ def get_service_requests(
     
     print(f"[DEBUG] User: {current_user.email}, Role: {user_role}, Admin: {is_admin}, EmpID: {current_employee_id}")
     
+    # Trigger scheduled orders so they appear in the task list if due
+    try:
+        from app.curd.foodorder import trigger_scheduled_orders
+        trigger_scheduled_orders(db)
+    except Exception as e:
+        print(f"[ERROR] Failed to trigger scheduled orders: {e}")
+
     service_requests = crud.get_service_requests(
         db, skip=skip, limit=limit, status=status, room_id=room_id, 
         employee_id=effective_employee_id
@@ -94,9 +101,27 @@ def get_service_requests(
                 refill_data = None
         
         try:
+            food_order_data = None
+            if sr.food_order:
+                    food_order_data = {
+                    "id": sr.food_order.id,
+                    "amount": sr.food_order.amount,
+                    "status": sr.food_order.status,
+                    "billing_status": sr.food_order.billing_status,
+                    "items": [
+                        {
+                            "id": item.id,
+                            "food_item_id": item.food_item_id,
+                            "food_item_name": item.food_item.name if item.food_item else "Unknown",
+                            "quantity": item.quantity
+                        } for item in sr.food_order.items
+                    ] if sr.food_order.items else []
+                }
+
             result.append({
                 "id": sr.id,
                 "food_order_id": sr.food_order_id,
+                "food_order": food_order_data,
                 "room_id": sr.room_id,
                 "employee_id": sr.employee_id,
                 "request_type": str(sr.request_type) if sr.request_type else None,
@@ -107,12 +132,18 @@ def get_service_requests(
                 "completed_at": sr.completed_at.isoformat() if sr.completed_at else None,
                 "is_checkout_request": False,
                 "is_assigned_service": False,
-                "room_number": str(getattr(sr, 'room_number', '')) if getattr(sr, 'room_number', None) else None,
-                "employee_name": str(getattr(sr, 'employee_name', '')) if getattr(sr, 'employee_name', None) else None,
-                "refill_data": refill_data
+                "room_number": sr.room.number if sr.room else (str(getattr(sr, 'room_number', '')) if getattr(sr, 'room_number', None) else None),
+                "employee_name": sr.employee.name if sr.employee else (str(getattr(sr, 'employee_name', '')) if getattr(sr, 'employee_name', None) else None),
+                "refill_data": refill_data,
+                "food_order_amount": sr.food_order.amount if sr.food_order else getattr(sr, 'food_order_amount', 0),
+                "food_order_status": sr.food_order.status if sr.food_order else getattr(sr, 'food_order_status', None),
+                "food_order_billing_status": sr.food_order.billing_status if sr.food_order else getattr(sr, 'food_order_billing_status', None),
+                "food_items": food_order_data["items"] if food_order_data else []
             })
         except Exception as e:
             print(f"[ERROR] Error converting service request {sr.id}: {e}")
+            import traceback
+            traceback.print_exc()
             continue
 
     # 2. Also include manually assigned services (AssignedService model)
@@ -192,13 +223,19 @@ def get_service_requests(
                 "description": asvc.service.description or f"Manual duty: {asvc.service.name}",
                 "status": str(asvc.status.value if hasattr(asvc.status, 'value') else asvc.status),
                 "created_at": asvc.assigned_at.isoformat() if asvc.assigned_at else None,
+                "started_at": asvc.started_at.isoformat() if getattr(asvc, 'started_at', None) else None,
                 "completed_at": asvc.last_used_at.isoformat() if getattr(asvc, 'last_used_at', None) else None,
                 "is_checkout_request": False,
                 "is_assigned_service": True,
                 "assigned_service_id": asvc.id,
                 "room_number": asvc.room.number if asvc.room else "???",
                 "employee_name": asvc.employee.name if asvc.employee else "Unassigned",
-                "refill_data": refill_data
+                "refill_data": refill_data,
+                "service": {
+                    "id": asvc.service.id,
+                    "name": asvc.service.name,
+                    "average_completion_time": getattr(asvc.service, 'average_completion_time', None)
+                }
             })
         except Exception as e:
             print(f"[ERROR] Error converting assigned service {asvc.id}: {e}")
@@ -288,6 +325,7 @@ def get_service_requests(
                         "description": f"Checkout inventory verification for Room {cr.room_number} - Guest: {cr.guest_name}",
                         "status": str(cr.status) if cr.status else "pending",
                         "created_at": cr.created_at.isoformat() if cr.created_at else None,
+                        "started_at": cr.started_at.isoformat() if getattr(cr, 'started_at', None) else None,
                         "completed_at": cr.completed_at.isoformat() if cr.completed_at else None,
                         "is_checkout_request": True,
                         "is_assigned_service": False,
@@ -331,6 +369,8 @@ def update_service_request(
     user_role = current_user.role.name.lower() if current_user.role else "guest"
     is_admin = user_role in ["admin", "manager", "owner", "superadmin"]
     current_employee_id = current_user.employee.id if current_user.employee else None
+    
+    print(f"[DEBUG-API] Updating ServiceRequest {request_id}. Status: {update.status}, Billing: {update.billing_status}")
 
     # 1. Check if this is a checkout request (ID > 1000000 and < 2000000)
     if 1000000 < request_id < 2000000:
@@ -349,7 +389,9 @@ def update_service_request(
             checkout_request.employee_id = update.employee_id
         if update.status is not None:
             checkout_request.status = update.status
-            if update.status == "completed":
+            if update.status == "in_progress" and not checkout_request.started_at:
+                checkout_request.started_at = datetime.utcnow()
+            elif update.status == "completed":
                 checkout_request.completed_at = datetime.utcnow()
         
         db.commit()
@@ -366,7 +408,13 @@ def update_service_request(
             "description": f"Checkout inventory verification for Room {checkout_request.room_number}",
             "status": checkout_request.status,
             "created_at": checkout_request.created_at,
-            "completed_at": checkout_request.completed_at
+            "started_at": checkout_request.started_at,
+            "completed_at": checkout_request.completed_at,
+            "service": {
+                "id": 0,
+                "name": "Checkout Verification",
+                "average_completion_time": "15 minutes"
+            }
         }
     
     # 2. Check if this is an assigned service (ID > 2000000)
@@ -385,7 +433,9 @@ def update_service_request(
         # Map ServiceRequestUpdate to AssignedServiceUpdate
         as_update = AssignedServiceUpdate(
             status=update.status,
-            employee_id=update.employee_id
+            employee_id=update.employee_id,
+            billing_status=update.billing_status,
+            return_location_id=update.return_location_id
         )
         
         updated_asvc = update_assigned_service_status(db, actual_assigned_id, as_update)
@@ -401,7 +451,13 @@ def update_service_request(
             "description": updated_asvc.service.description if updated_asvc.service else "",
             "status": str(updated_asvc.status.value if hasattr(updated_asvc.status, 'value') else updated_asvc.status),
             "created_at": updated_asvc.assigned_at,
-            "completed_at": getattr(updated_asvc, 'last_used_at', None)
+            "started_at": updated_asvc.started_at,
+            "completed_at": getattr(updated_asvc, 'last_used_at', None),
+            "service": {
+                "id": updated_asvc.service.id if updated_asvc.service else 0,
+                "name": updated_asvc.service.name if updated_asvc.service else "Service",
+                "average_completion_time": getattr(updated_asvc.service, 'average_completion_time', None) if updated_asvc.service else None
+            }
         }
 
     # 3. Regular service request

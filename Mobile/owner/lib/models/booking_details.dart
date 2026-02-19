@@ -176,7 +176,9 @@ class BookingDetails {
       foodOrdersTotal: (json['food_orders_total'] ?? 0).toDouble(),
       advanceDeposit: (json['advance_deposit'] ?? 0).toDouble(),
       source: json['source'] ?? 'Direct',
-      packageName: json['package_name'],
+      packageName: (json['package'] != null && json['package'] is Map) 
+          ? (json['package']['title'] ?? json['package']['name'] ?? json['package_name']) 
+          : (json['package_name']),
       isIdVerified: json['is_id_verified'] ?? false,
       digitalSignatureUrl: json['digital_signature_url'],
       specialRequests: json['special_requests'],

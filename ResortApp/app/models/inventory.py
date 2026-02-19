@@ -278,6 +278,8 @@ class StockIssue(Base):
     destination_location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)  # Where it went
     issue_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     notes = Column(Text, nullable=True)
+    booking_id = Column(Integer, index=True, nullable=True)
+    guest_id = Column(Integer, index=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     details = relationship("StockIssueDetail", back_populates="issue", cascade="all, delete-orphan")

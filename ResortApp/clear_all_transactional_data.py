@@ -8,12 +8,13 @@ from app.database import SessionLocal
 from app.models.booking import Booking, BookingRoom
 from app.models.Package import PackageBooking, PackageBookingRoom
 from app.models.service import AssignedService
+from app.models.employee_inventory import EmployeeInventoryAssignment
 from app.models.service_request import ServiceRequest
-from app.models.checkout import Checkout, CheckoutRequest, CheckoutPayment
-from app.models.foodorder import FoodOrder
+from app.models.checkout import Checkout, CheckoutRequest, CheckoutPayment, CheckoutVerification
+from app.models.foodorder import FoodOrder, FoodOrderItem
 from app.models.inventory import (
     InventoryTransaction, LocationStock, StockIssue, StockIssueDetail,
-    PurchaseMaster, PurchaseDetail, WasteLog
+    PurchaseMaster, PurchaseDetail, WasteLog, AssetRegistry, AssetMapping
 )
 from app.models.notification import Notification
 
@@ -27,35 +28,49 @@ counts = {}
 
 # 1. Checkouts (must be deleted before bookings due to FK)
 print("\n💳 Clearing checkouts...")
+print("\n💳 Clearing checkouts...")
 counts['checkout_payments'] = db.query(CheckoutPayment).count()
+counts['checkout_verifications'] = db.query(CheckoutVerification).count()
 counts['checkout_requests'] = db.query(CheckoutRequest).count()
 counts['checkouts'] = db.query(Checkout).count()
 
 db.query(CheckoutPayment).delete()
+db.query(CheckoutVerification).delete()
 db.query(CheckoutRequest).delete()
 db.query(Checkout).delete()
 
 print(f"   ✅ Deleted {counts['checkouts']} checkouts")
+print(f"   ✅ Deleted {counts['checkout_verifications']} checkout verifications")
 print(f"   ✅ Deleted {counts['checkout_requests']} checkout requests")
 print(f"   ✅ Deleted {counts['checkout_payments']} checkout payments")
 
-# 2. Food Orders
-print("\n🍽️  Clearing food orders...")
-counts['food_orders'] = db.query(FoodOrder).count()
-db.query(FoodOrder).delete()
-print(f"   ✅ Deleted {counts['food_orders']} food orders")
-
-# 3. Services
-print("\n🛎️  Clearing assigned services...")
-counts['assigned_services'] = db.query(AssignedService).count()
-db.query(AssignedService).delete()
-print(f"   ✅ Deleted {counts['assigned_services']} assigned services")
-
-# 4. Service Requests
+# 2. Service Requests
 print("\n📋 Clearing service requests...")
 counts['service_requests'] = db.query(ServiceRequest).count()
 db.query(ServiceRequest).delete()
 print(f"   ✅ Deleted {counts['service_requests']} service requests")
+
+# 3. Food Orders
+print("\n🍽️  Clearing food orders...")
+counts['food_order_items'] = db.query(FoodOrderItem).count()
+counts['food_orders'] = db.query(FoodOrder).count()
+
+db.query(FoodOrderItem).delete()
+db.query(FoodOrder).delete()
+
+print(f"   ✅ Deleted {counts['food_order_items']} food order items")
+print(f"   ✅ Deleted {counts['food_orders']} food orders")
+
+# 4. Services
+print("\n🛎️  Clearing assigned services...")
+counts['employee_inventory_assignments'] = db.query(EmployeeInventoryAssignment).count()
+counts['assigned_services'] = db.query(AssignedService).count()
+
+db.query(EmployeeInventoryAssignment).delete()
+db.query(AssignedService).delete()
+
+print(f"   ✅ Deleted {counts['employee_inventory_assignments']} employee inventory assignments")
+print(f"   ✅ Deleted {counts['assigned_services']} assigned services")
 
 # 5. Bookings (after checkouts are deleted)
 print("\n📅 Clearing bookings...")
@@ -94,9 +109,22 @@ db.query(WasteLog).delete()
 
 print(f"   ✅ Deleted {counts['transactions']} transactions")
 print(f"   ✅ Deleted {counts['location_stocks']} location stocks")
+print(f"   ✅ Deleted {counts['stock_issue_details']} stock issue details")
 print(f"   ✅ Deleted {counts['stock_issues']} stock issues")
+print(f"   ✅ Deleted {counts['purchase_details']} purchase details")
 print(f"   ✅ Deleted {counts['purchases']} purchases")
 print(f"   ✅ Deleted {counts['waste_logs']} waste logs")
+
+# 7. Assets and Mappings
+print("\n🏢 Clearing asset registries and mappings...")
+counts['asset_registry'] = db.query(AssetRegistry).count()
+counts['asset_mappings'] = db.query(AssetMapping).count()
+
+db.query(AssetRegistry).delete()
+db.query(AssetMapping).delete()
+
+print(f"   ✅ Deleted {counts['asset_registry']} asset registry entries")
+print(f"   ✅ Deleted {counts['asset_mappings']} asset mappings")
 
 # 7. Reset item stocks to 0
 print("\n🔄 Resetting item stocks...")

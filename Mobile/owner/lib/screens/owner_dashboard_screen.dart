@@ -35,6 +35,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
         dash.fetchDailyKPIs();   
         dash.fetchChartData();   
         dash.fetchReportsData(); // Recent Activity
+        dash.fetchFinancialTrends(); // Added
         
         Provider.of<ExpenseProvider>(context, listen: false).fetchExpenses();
         Provider.of<StaffProvider>(context, listen: false).fetchEmployees();
@@ -48,9 +49,10 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
     final daily = dashboardProvider.dailyStats;
     final roomStats = dashboardProvider.roomStats;
     final chartData = dashboardProvider.chartData;
+    final financialTrends = dashboardProvider.financialTrends; // Added
     final recentActivity = dashboardProvider.recentActivity;
     
-    final currencyFormat = NumberFormat.simpleCurrency(name: 'INR', decimalDigits: 0);
+    final currencyFormat = NumberFormat.simpleCurrency(name: 'INR', locale: 'en_IN', decimalDigits: 0);
 
     if (dashboardProvider.isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -78,7 +80,9 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
           await dashboardProvider.fetchKPIData();
           await dashboardProvider.fetchDailyKPIs();
           await dashboardProvider.fetchRoomStats();
+          await dashboardProvider.fetchRoomStats();
           await dashboardProvider.fetchChartData();
+          await dashboardProvider.fetchFinancialTrends();
           await dashboardProvider.fetchReportsData();
         },
         child: SingleChildScrollView(
@@ -246,6 +250,108 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
                 ),
               ),
 
+              const SizedBox(height: 24),
+
+              // 6. Revenue Breakdown (Pie & Modes)
+              _buildSectionTitle("Revenue Analysis"),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                      child: Column(
+                        children: [
+                          const Text("Sources", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const SizedBox(height: 10),
+                          SizedBox(height: 150, child: _buildSourcePieChart(chartData['revenue_breakdown'] ?? [])),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                      child: Column(
+                        children: [
+                          const Text("Payment Modes", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const SizedBox(height: 10),
+                          if (kpi.revenueByMode.isEmpty)
+                            const SizedBox(height: 150, child: Center(child: Text("No Data", style: TextStyle(color: Colors.grey))))
+                          else
+                            Column(
+                              children: kpi.revenueByMode.entries.map((e) => Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 4),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(e.key, style: const TextStyle(fontSize: 12)),
+                                    Text(currencyFormat.format(e.value), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                                  ],
+                                ),
+                              )).toList(),
+                            )
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 24),
+
+              // 7. Financial Trends
+              _buildSectionTitle("Financial Trends (6 Months)"),
+               Container(
+                 height: 250, 
+                 padding: const EdgeInsets.all(16),
+                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                 child: _buildTrendsChart(financialTrends),
+              ),
+
+              const SizedBox(height: 24),
+
+              // 8. Department Performance
+              _buildSectionTitle("Department Performance"),
+              if (kpi.departmentKpis.isEmpty)
+                 const Center(child: Text("No department data available", style: TextStyle(color: Colors.grey)))
+              else
+                 ListView.builder(
+                   shrinkWrap: true,
+                   physics: const NeverScrollableScrollPhysics(),
+                   itemCount: kpi.departmentKpis.length,
+                   itemBuilder: (context, index) {
+                     final deptName = kpi.departmentKpis.keys.elementAt(index);
+                     final data = kpi.departmentKpis[deptName];
+                     return Card(
+                       margin: const EdgeInsets.only(bottom: 12),
+                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                       child: Padding(
+                         padding: const EdgeInsets.all(16),
+                         child: Column(
+                           crossAxisAlignment: CrossAxisAlignment.start,
+                           children: [
+                             Text(deptName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                             const Divider(),
+                             Row(
+                               mainAxisAlignment: MainAxisAlignment.spaceAround,
+                               children: [
+                                 _departmentStat("Income", data['income'], Colors.green, currencyFormat),
+                                 _departmentStat("Expense", data['expenses'], Colors.red, currencyFormat),
+                                 _departmentStat("Assets", data['assets'], Colors.blue, currencyFormat),
+                               ],
+                             )
+                           ],
+                         ),
+                       ),
+                     );
+                   },
+                 ),
+
+
               const SizedBox(height: 40),
             ],
           ),
@@ -373,6 +479,76 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
             dotData: const FlDotData(show: false),
             belowBarData: BarAreaData(show: true, color: Colors.blue.withOpacity(0.1)),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _departmentStat(String label, dynamic value, Color color, NumberFormat fmt) {
+    return Column(
+      children: [
+        Text(fmt.format(value ?? 0), style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 14)),
+        Text(label, style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+      ],
+    );
+  }
+
+  Widget _buildSourcePieChart(List<dynamic> data) {
+    if (data.isEmpty) return const Center(child: Text("No Data"));
+    
+    // Parse data
+    List<PieChartSectionData> sections = [];
+    final colors = [Colors.blue, Colors.orange, Colors.green, Colors.purple];
+    
+    for (int i = 0; i < data.length; i++) {
+        final val = (data[i]['value'] ?? 0).toDouble();
+        if (val > 0) {
+           sections.add(PieChartSectionData(
+             color: colors[i % colors.length],
+             value: val,
+             title: '${(val/1000).toStringAsFixed(1)}k',
+             radius: 30,
+             titleStyle: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)
+           ));
+        }
+    }
+    
+    return PieChart(PieChartData(
+       sections: sections,
+       centerSpaceRadius: 20,
+       sectionsSpace: 2,
+    ));
+  }
+
+  Widget _buildTrendsChart(List<dynamic> trends) {
+    if (trends.isEmpty) return const Center(child: Text("No Data"));
+    
+    List<FlSpot> revSpots = [];
+    List<FlSpot> expSpots = [];
+    List<String> titles = [];
+    
+    for (int i = 0; i < trends.length; i++) {
+       titles.add(trends[i]['month'].toString().split(' ')[0]); // "Jan"
+       revSpots.add(FlSpot(i.toDouble(), (trends[i]['revenue'] ?? 0).toDouble()));
+       expSpots.add(FlSpot(i.toDouble(), (trends[i]['expense'] ?? 0).toDouble()));
+    }
+
+    return LineChart(
+      LineChartData(
+        gridData: const FlGridData(show: true, drawVerticalLine: false),
+        titlesData: FlTitlesData(
+          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, getTitlesWidget: (val, _) {
+             if (val.toInt() >= 0 && val.toInt() < titles.length) return Text(titles[val.toInt()], style: const TextStyle(fontSize: 10));
+             return const Text("");
+          })),
+        ),
+        borderData: FlBorderData(show: false),
+        lineBarsData: [
+          LineChartBarData(spots: revSpots, color: Colors.green, isCurved: true, barWidth: 3, dotData: const FlDotData(show: true)),
+          LineChartBarData(spots: expSpots, color: Colors.red, isCurved: true, barWidth: 3, dotData: const FlDotData(show: true)),
         ],
       ),
     );

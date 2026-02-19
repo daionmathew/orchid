@@ -27,6 +27,9 @@ const ItemsTable = ({ items, categories, onDelete, onEdit, onViewHistory }) => {
                             Unit Price
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                            Selling Price
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                             Total Value
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
@@ -76,6 +79,9 @@ const ItemsTable = ({ items, categories, onDelete, onEdit, onViewHistory }) => {
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-600">
                                     {item.unit_price != null ? formatCurrency(item.unit_price) : "-"}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-600">
+                                    {item.selling_price != null ? formatCurrency(item.selling_price) : "-"}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-600">
                                     {item.unit_price != null ? formatCurrency(item.current_stock * item.unit_price) : "-"}

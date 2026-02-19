@@ -147,3 +147,10 @@ All endpoints are now properly configured. Any remaining 500 errors are likely d
 3. Relationship configuration issues
 
 Check server logs for specific error messages to diagnose further.
+
+### FIXED: Stock Issue Race Condition (POST /api/inventory/issues)
+
+**Problem:** 500 Error due to duplicate issue_number generation under load.
+**Solution:** Added retry mechanism (3 retries) to create_stock_issue in app/curd/inventory.py.
+**Status:** FIXED (2026-01-29)
+

@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 $pem = "$env:USERPROFILE\.ssh\gcp_key"
-$remote = "basilabrahamaby@136.113.93.47"
+$remote = "basilabrahamaby@34.30.59.169"
 $localFile = "c:\releasing\New Orchid\ResortApp\app\schemas\booking.py"
 
 Write-Host "Uploading booking.py schema..."

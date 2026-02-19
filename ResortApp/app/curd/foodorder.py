@@ -4,8 +4,68 @@ from app.models.booking import Booking, BookingRoom
 from app.models.Package import PackageBooking, PackageBookingRoom
 from app.models.service_request import ServiceRequest
 from app.schemas.foodorder import FoodOrderCreate, FoodOrderUpdate
-from datetime import datetime
+from datetime import datetime, timedelta
+import re
 from app.curd.notification import notify_food_order_created, notify_food_order_status_changed
+
+def get_ist_now():
+    """Get current time in Indian Standard Time (UTC+5:30)"""
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+def get_booking_for_room(room_id, db: Session, reference_date=None):
+    """Get active booking for a room from either regular or package bookings"""
+    if not room_id:
+        return None, False
+    
+    # Ensure reference_date is a datetime or date object
+    ref_dt = reference_date if reference_date else get_ist_now()
+    ref_date = ref_dt.date() if isinstance(ref_dt, datetime) else ref_dt
+    
+    # Check regular bookings first
+    query = (
+        db.query(Booking)
+        .join(BookingRoom)
+        .filter(BookingRoom.room_id == room_id)
+        .filter(Booking.status != "cancelled")
+    )
+    
+    # Find booking covering the reference date (or currently active)
+    active_booking = query.filter(Booking.check_in <= ref_date)\
+                         .filter(Booking.check_out >= ref_date)\
+                         .order_by(Booking.id.desc()).first()
+    
+    if active_booking:
+        return active_booking.id, False
+    
+    # Check package bookings
+    pkg_query = (
+        db.query(PackageBooking)
+        .join(PackageBookingRoom)
+        .filter(PackageBookingRoom.room_id == room_id)
+        .filter(PackageBooking.status != "cancelled")
+    )
+    
+    active_package_booking = pkg_query.filter(PackageBooking.check_in <= ref_date)\
+                                     .filter(PackageBooking.check_out >= ref_date)\
+                                     .order_by(PackageBooking.id.desc()).first()
+    
+    if active_package_booking:
+        return active_package_booking.id, True
+    
+    # Fallback: Just find ANY active booking (checked-in) for this room
+    fallback = db.query(Booking).join(BookingRoom).filter(
+        BookingRoom.room_id == room_id,
+        Booking.status == "checked-in"
+    ).order_by(Booking.id.desc()).first()
+    if fallback: return fallback.id, False
+    
+    fallback_pkg = db.query(PackageBooking).join(PackageBookingRoom).filter(
+        PackageBookingRoom.room_id == room_id,
+        PackageBooking.status == "checked-in"
+    ).order_by(PackageBooking.id.desc()).first()
+    if fallback_pkg: return fallback_pkg.id, True
+    
+    return None, False
 
 def get_guest_for_room(room_id, db: Session, reference_date=None):
     """Get guest name for a room from either regular or package bookings"""
@@ -55,18 +115,56 @@ def get_guest_for_room(room_id, db: Session, reference_date=None):
     if active_package_booking:
         return active_package_booking.guest_name
     
+    # Fallback: Just find ANY active booking for this room if date filter was too strict
+    if ref_date:
+        fallback = db.query(Booking).join(BookingRoom).filter(
+            BookingRoom.room_id == room_id,
+            Booking.status.in_(["checked-in", "booked"])
+        ).order_by(Booking.id.desc()).first()
+        if fallback: return fallback.guest_name
+        
+        fallback_pkg = db.query(PackageBooking).join(PackageBookingRoom).filter(
+            PackageBookingRoom.room_id == room_id,
+            PackageBooking.status.in_(["checked-in", "booked"])
+        ).order_by(PackageBooking.id.desc()).first()
+        if fallback_pkg: return fallback_pkg.guest_name
+    
     return None
 
 def create_food_order(db: Session, order_data: FoodOrderCreate):
+    status = getattr(order_data, 'status', 'pending')
+    billing_status = getattr(order_data, 'billing_status', 'unbilled')
+    
+    # If amount is 0, it's complimentary - force to room_service
+    order_type = getattr(order_data, 'order_type', 'dine_in')
+    amount = order_data.amount or 0.0
+    if amount == 0:
+        order_type = 'room_service'
+
+    # Try to link to a booking if not provided
+    booking_id = getattr(order_data, 'booking_id', None)
+    package_booking_id = getattr(order_data, 'package_booking_id', None)
+    
+    if not booking_id and not package_booking_id:
+        b_id, is_pkg = get_booking_for_room(order_data.room_id, db)
+        if b_id:
+            if is_pkg:
+                package_booking_id = b_id
+            else:
+                booking_id = b_id
+
     order = FoodOrder(
         room_id=order_data.room_id,
-        amount=order_data.amount,
+        booking_id=booking_id,
+        package_booking_id=package_booking_id,
+        amount=amount,
         assigned_employee_id=order_data.assigned_employee_id,
-        status="pending",
-        billing_status="unbilled",
-        order_type=getattr(order_data, 'order_type', 'dine_in'),
+        status=status,
+        billing_status=billing_status,
+        order_type=order_type,
         delivery_request=getattr(order_data, 'delivery_request', None),
-        created_by_id=order_data.assigned_employee_id # Default creator to assigned employee for now
+        created_by_id=getattr(order_data, 'created_by_id', None) or order_data.assigned_employee_id,
+        created_at=get_ist_now() # Use IST for consistent creation time
     )
     db.add(order)
     db.commit()
@@ -82,7 +180,7 @@ def create_food_order(db: Session, order_data: FoodOrderCreate):
     db.commit()
     db.refresh(order)
     
-    # Create service request immediately for room service orders
+    # Create service request immediately for room service orders (even if scheduled)
     if order.order_type == "room_service":
         # Check if service request already exists
         existing_request = db.query(ServiceRequest).filter(
@@ -93,9 +191,9 @@ def create_food_order(db: Session, order_data: FoodOrderCreate):
                 food_order_id=order.id,
                 room_id=order.room_id,
                 employee_id=order.assigned_employee_id,
-                request_type="delivery",
+                request_type="food_delivery",
                 description=order.delivery_request or f"Room service delivery for food order #{order.id}",
-                status="pending"
+                status="pending" if status != "scheduled" else "scheduled" 
             )
             db.add(service_request)
             db.commit()
@@ -124,7 +222,7 @@ def create_food_order(db: Session, order_data: FoodOrderCreate):
 
     return order
 
-def get_food_orders(db: Session, skip: int = 0, limit: int = 100):
+def get_food_orders(db: Session, skip: int = 0, limit: int = 100, room_id: int = None, booking_id: int = None, package_booking_id: int = None, user_id: int = None):
     from sqlalchemy.orm import joinedload
     
     # Cap limit to prevent performance issues
@@ -135,13 +233,31 @@ def get_food_orders(db: Session, skip: int = 0, limit: int = 100):
     
     # Eager load relationships so guest/employee names are available
     try:
+        query = db.query(FoodOrder)
+        if room_id:
+            query = query.filter(FoodOrder.room_id == room_id)
+        if booking_id:
+            query = query.filter(FoodOrder.booking_id == booking_id)
+        if package_booking_id:
+            query = query.filter(FoodOrder.package_booking_id == package_booking_id)
+        if user_id:
+            from sqlalchemy import or_
+            query = query.outerjoin(FoodOrder.booking).outerjoin(FoodOrder.package_booking).filter(
+                or_(
+                    Booking.user_id == user_id,
+                    PackageBooking.user_id == user_id
+                )
+            )
+            
         orders = (
-            db.query(FoodOrder)
+            query
             .options(
                 joinedload(FoodOrder.employee),  # Load employee for employee name
                 joinedload(FoodOrder.creator),   # Load creator name
                 joinedload(FoodOrder.chef),      # Load chef name
                 joinedload(FoodOrder.room),      # Load room for room number
+                joinedload(FoodOrder.booking),   # Load booking for guest name
+                joinedload(FoodOrder.package_booking), # Load package booking
                 joinedload(FoodOrder.items).joinedload(FoodOrderItem.food_item)  # Load items and food details
             )
             .order_by(FoodOrder.id.desc())
@@ -169,8 +285,13 @@ def get_food_orders(db: Session, skip: int = 0, limit: int = 100):
             order.chef_name = order.chef.name if order.chef else "Not Started"
             
             # Set guest name significantly improved logic:
-            # Search for booking that was active at the time the order was created
-            order.guest_name = get_guest_for_room(order.room_id, db, order.created_at)
+            if order.booking:
+                order.guest_name = order.booking.guest_name
+            elif order.package_booking:
+                order.guest_name = order.package_booking.guest_name
+            else:
+                # Fallback: Search for booking that was active at the time the order was created
+                order.guest_name = get_guest_for_room(order.room_id, db, order.created_at)
         
         return orders
     except Exception as e:
@@ -262,23 +383,6 @@ def update_food_order(db: Session, order_id: int, update_data: FoodOrderUpdate):
             except Exception as e:
                 print(f"Failed to process inventory usage: {e}")
 
-        # If completing a room service order, create a service request
-        if update_data.status == "completed" and order.order_type == "room_service":
-            # Check if service request already exists
-            existing_request = db.query(ServiceRequest).filter(
-                ServiceRequest.food_order_id == order.id
-            ).first()
-            if not existing_request:
-                service_request = ServiceRequest(
-                    food_order_id=order.id,
-                    room_id=order.room_id,
-                    employee_id=order.assigned_employee_id,
-                    request_type="delivery",
-                    description=order.delivery_request or f"Room service delivery for food order #{order.id}",
-                    status="pending"
-                )
-                db.add(service_request)
-        
         # Notify status change
         try:
             from app.models.room import Room
@@ -297,14 +401,37 @@ def update_food_order(db: Session, order_id: int, update_data: FoodOrderUpdate):
         except Exception as e:
             print(f"Notification error: {e}")
 
+    # Update other fields
     if update_data.billing_status is not None:
         order.billing_status = update_data.billing_status
     if update_data.payment_method is not None:
         order.payment_method = update_data.payment_method
-    if update_data.order_type is not None:
-        order.order_type = update_data.order_type
     if update_data.delivery_request is not None:
         order.delivery_request = update_data.delivery_request
+
+    # Force room_service for complimentary orders in update too
+    if order.amount == 0:
+        order.order_type = "room_service"
+    elif update_data.order_type is not None:
+        order.order_type = update_data.order_type
+
+    # Ensure ServiceRequest is created for room service orders whenever they are active
+    if order.order_type == "room_service" and order.status not in ["cancelled", "deleted"]:
+        # Check if service request already exists
+        existing_request = db.query(ServiceRequest).filter(
+            ServiceRequest.food_order_id == order.id
+        ).first()
+        if not existing_request:
+            service_request = ServiceRequest(
+                food_order_id=order.id,
+                room_id=order.room_id,
+                employee_id=order.assigned_employee_id,
+                request_type="delivery",
+                description=order.delivery_request or f"Room service delivery for food order #{order.id}",
+                status="pending" if order.status != "scheduled" else "scheduled"
+            )
+            db.add(service_request)
+            print(f"[INFO] Created missing ServiceRequest for room service order {order.id}")
 
     if update_data.items is not None:
         db.query(FoodOrderItem).filter(FoodOrderItem.order_id == order.id).delete()
@@ -319,3 +446,67 @@ def update_food_order(db: Session, order_id: int, update_data: FoodOrderUpdate):
     db.commit()
     db.refresh(order)
     return order
+
+def trigger_scheduled_orders(db: Session):
+    """
+    Check for scheduled orders and trigger them if within 30 minutes of scheduled time.
+    Parses 'delivery_request' to find 'SCHEDULED_FOR: YYYY-MM-DD HH:MM:SS'.
+    """
+    try:
+        from app.models.foodorder import FoodOrder
+        from app.models.service_request import ServiceRequest
+        
+        # Use IST for comparison as scheduled times are usually in IST
+        now = get_ist_now()
+        
+        # Find orders with status 'scheduled'
+        scheduled_orders = db.query(FoodOrder).filter(FoodOrder.status == 'scheduled').all()
+        
+        if scheduled_orders:
+            print(f"[DEBUG-TRIGGER] Checking {len(scheduled_orders)} scheduled orders at {now.strftime('%H:%M:%S')}")
+        
+        triggered_count = 0
+        for order in scheduled_orders:
+            if not order.delivery_request:
+                continue
+                
+            # Parse scheduled time safely
+            # Format: "SCHEDULED_FOR: 2025-12-27 20:00:00 -- ..."
+            match = re.search(r"SCHEDULED_FOR: (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", order.delivery_request)
+            if match:
+                time_str = match.group(1)
+                try:
+                    scheduled_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+                    # Use 60 minutes lead time instead of 30 to ensure staff have time to prepare
+                    trigger_time = scheduled_time - timedelta(minutes=60)
+                    
+                    # Debug log for the specific order in the screenshot window
+                    if "18:01:00" in time_str or "20:27:00" in time_str:
+                         print(f"[DEBUG-TRIGGER] Order {order.id} scheduled for {time_str}. Trigger window starts at {trigger_time.strftime('%H:%M:%S')}. Current IST: {now.strftime('%H:%M:%S')}")
+
+                    if now >= trigger_time:
+                        print(f"[DEBUG-TRIGGER] TRIGGERING order {order.id} (status: scheduled -> pending)")
+                        order.status = "pending"
+                        triggered_count += 1
+                        
+                        # Also trigger linked ServiceRequest if it exists and is scheduled
+                        sreqs = db.query(ServiceRequest).filter(
+                            ServiceRequest.food_order_id == order.id,
+                            ServiceRequest.status == "scheduled"
+                        ).all()
+                        for sreq in sreqs:
+                            print(f"[DEBUG-TRIGGER] TRIGGERING linked service request {sreq.id} (status: scheduled -> pending)")
+                            sreq.status = "pending"
+                except ValueError as ve:
+                    print(f"[DEBUG-TRIGGER] Error parsing time for order {order.id}: {ve}")
+        
+        if triggered_count > 0:
+            db.commit()
+            print(f"[DEBUG-TRIGGER] Successfully triggered {triggered_count} orders/tasks.")
+            
+    except Exception as e:
+        print(f"Error checking scheduled orders: {e}")
+        import traceback
+        traceback.print_exc()
+
+    return True

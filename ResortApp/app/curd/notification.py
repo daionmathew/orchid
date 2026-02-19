@@ -186,7 +186,7 @@ def notify_expense_added(db: Session, expense_name: str, amount: float, expense_
     return create_notification(db, NotificationCreate(
         type=NotificationType.EXPENSE,
         title="New Expense Added",
-        message=f"Expense '{expense_name}' of ₹{amount:,.2f} has been recorded.",
+        message=f"Expense '{expense_name}' of Rs.{amount:,.2f} has been recorded.",
         entity_type="expense",
         entity_id=expense_id
     ))

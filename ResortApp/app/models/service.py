@@ -45,15 +45,21 @@ class AssignedService(Base):
     service_id = Column(Integer, ForeignKey("services.id"))
     employee_id = Column(Integer, ForeignKey("employees.id"))
     room_id = Column(Integer, ForeignKey("rooms.id"))
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=True)
+    package_booking_id = Column(Integer, ForeignKey("package_bookings.id"), nullable=True)
     assigned_at = Column(DateTime, default=datetime.utcnow)
     status = Column(Enum(ServiceStatus), default=ServiceStatus.pending)
     billing_status = Column(String, default="unbilled")
     last_used_at = Column(DateTime, nullable=True)  # Timestamp when service was last used (marked during checkout)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
     override_charges = Column(Float, nullable=True)  # Manual override for service charges (e.g. for damages)
 
     service = relationship("Service")
     employee = relationship("Employee")
     room = relationship("Room")
+    booking = relationship("Booking", backref="assigned_services")
+    package_booking = relationship("PackageBooking", backref="assigned_services")
     # inventory_assignments relationship is defined in employee_inventory.py via backref
 
 

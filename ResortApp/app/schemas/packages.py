@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
 
@@ -81,6 +81,7 @@ class PackageBookingUpdate(BaseModel):
 
 class PackageBookingOut(PackageBookingBase):
     id: int
+    created_at: Optional[datetime] = None # Added for sorting
     display_id: Optional[str] = None  # Format: PK-000001
     status: str
     total_amount: Optional[float] = 0.0

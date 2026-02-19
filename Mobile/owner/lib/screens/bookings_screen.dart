@@ -38,6 +38,16 @@ class _BookingsScreenState extends State<BookingsScreen> with SingleTickerProvid
   }
 
   // --- Helpers ---
+  String _formatDate(String dateStr) {
+    try {
+      if (dateStr.isEmpty) return '';
+      final date = DateTime.parse(dateStr);
+      return DateFormat('dd-MM-yyyy').format(date);
+    } catch (e) {
+      return dateStr;
+    }
+  }
+
   Color _getStatusColor(String status) {
     switch (status.toLowerCase()) {
       case 'checked_in':
@@ -356,7 +366,7 @@ class _BookingsScreenState extends State<BookingsScreen> with SingleTickerProvid
                              const SizedBox(width: 12),
                              Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
                              const SizedBox(width: 4),
-                             Text('${booking.checkInDate} -> ${booking.checkOutDate}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                             Text('${_formatDate(booking.checkInDate)} -> ${_formatDate(booking.checkOutDate)}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -382,7 +392,7 @@ class _BookingsScreenState extends State<BookingsScreen> with SingleTickerProvid
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text('\$${booking.amount}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
+                      Text('₹${booking.amount}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
                       Text(booking.source, style: const TextStyle(fontSize: 10, color: Colors.grey)),
                     ],
                   ),

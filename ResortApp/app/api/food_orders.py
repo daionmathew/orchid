@@ -21,60 +21,24 @@ def create_order(order: FoodOrderCreate, db: Session = Depends(get_db), current_
 def create_order_slash(order: FoodOrderCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return _create_order_impl(order, db, current_user)
 
-def _get_orders_impl(db: Session, skip: int = 0, limit: int = 20):
+def _get_orders_impl(db: Session, skip: int = 0, limit: int = 20, room_id: int = None, booking_id: int = None, package_booking_id: int = None, user_id: int = None):
     """Helper function for get_orders - optimized for low network"""
     limit = optimize_limit(limit, MAX_LIMIT_LOW_NETWORK)
-    return crud.get_food_orders(db, skip=skip, limit=limit)
+    return crud.get_food_orders(db, skip=skip, limit=limit, room_id=room_id, booking_id=booking_id, package_booking_id=package_booking_id, user_id=user_id)
 
 def trigger_scheduled_orders(db: Session):
-    """
-    Check for scheduled orders and trigger them if within 30 minutes of scheduled time.
-    Parses 'delivery_request' to find 'SCHEDULED_FOR: YYYY-MM-DD HH:MM:SS'.
-    """
-    try:
-        from app.models.foodorder import FoodOrder
-        from datetime import datetime, timedelta
-        import re
-
-        # Find orders with status 'scheduled'
-        scheduled_orders = db.query(FoodOrder).filter(FoodOrder.status == 'scheduled').all()
-        
-        now = datetime.now()
-        
-        for order in scheduled_orders:
-            if not order.delivery_request:
-                continue
-                
-            # Parse scheduled time safely
-            # Format: "SCHEDULED_FOR: 2025-12-27 20:00:00 -- ..."
-            match = re.search(r"SCHEDULED_FOR: (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", order.delivery_request)
-            if match:
-                time_str = match.group(1)
-                try:
-                    scheduled_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-                    trigger_time = scheduled_time - timedelta(minutes=30)
-                    
-                    if now >= trigger_time:
-                        order.status = "pending"
-                        print(f"Auto-triggered scheduled order {order.id} for {scheduled_time}")
-                except ValueError:
-                    pass
-        
-        if scheduled_orders:
-            db.commit()
-            
-    except Exception as e:
-        print(f"Error checking scheduled orders: {e}")
+    """Check for scheduled orders and trigger them if due."""
+    return crud.trigger_scheduled_orders(db)
 
 @router.get("", response_model=List[FoodOrderOut])
-def get_orders(db: Session = Depends(get_db), current_user: User = Depends(get_current_user), skip: int = 0, limit: int = 20):
+def get_orders(db: Session = Depends(get_db), current_user: User = Depends(get_current_user), skip: int = 0, limit: int = 20, room_id: int = None, booking_id: int = None, package_booking_id: int = None, user_id: int = None):
     trigger_scheduled_orders(db)
-    return _get_orders_impl(db, skip, limit)
+    return _get_orders_impl(db, skip, limit, room_id, booking_id, package_booking_id, user_id)
 
 @router.get("/", response_model=List[FoodOrderOut])  # Handle trailing slash
-def get_orders_slash(db: Session = Depends(get_db), current_user: User = Depends(get_current_user), skip: int = 0, limit: int = 20):
+def get_orders_slash(db: Session = Depends(get_db), current_user: User = Depends(get_current_user), skip: int = 0, limit: int = 20, room_id: int = None, booking_id: int = None, package_booking_id: int = None, user_id: int = None):
     trigger_scheduled_orders(db)
-    return _get_orders_impl(db, skip, limit)
+    return _get_orders_impl(db, skip, limit, room_id, booking_id, package_booking_id, user_id)
 
 @router.delete("/{order_id}")
 def delete_order(order_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -93,64 +57,22 @@ def cancel_order(order_id: int, db: Session = Depends(get_db), current_user: Use
 @router.put("/{order_id}", response_model=FoodOrderOut)
 def update_order(order_id: int, order_update: FoodOrderUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     from app.models.foodorder import FoodOrder
+    from app.models.employee import Employee
     
     # Check current status before update
     current_order = db.query(FoodOrder).filter(FoodOrder.id == order_id).first()
     if not current_order:
         raise HTTPException(status_code=404, detail="Order not found")
         
-    current_status = current_order.status
-    
     # Auto-set prepared_by_id if moving to cooking
     if order_update.status in ['cooking', 'accepted', 'preparing', 'ready'] and current_order.prepared_by_id is None:
         # Link current user (chef) to the order
-        chef_emp = db.query(models.Employee).filter(models.Employee.user_id == current_user.id).first()
+        chef_emp = db.query(Employee).filter(Employee.user_id == current_user.id).first()
         if chef_emp:
             order_update.prepared_by_id = chef_emp.id
 
-    updated = crud.update_food_order(db, order_id, order_update)
-    
-    # If status changed to 'completed', deduct inventory
-    if updated.status == 'completed' and current_status != 'completed':
-        try:
-             _deduct_inventory_for_order(db, updated, current_user)
-        except Exception as e:
-             print(f"Error deducting inventory: {e}")
-             # Non-blocking error
-             
+    updated = crud.update_food_order(db, order_id, order_update)     
     return updated
-
-def _deduct_inventory_for_order(db: Session, order, user):
-    from app.models.recipe import Recipe
-    from app.models.inventory import InventoryTransaction, InventoryItem
-    
-    # Deduction Logic
-    for order_item in order.items:
-        # Find recipe
-        recipe = db.query(Recipe).filter(Recipe.food_item_id == order_item.food_item_id).first()
-        if not recipe: 
-            continue
-            
-        for ingredient in recipe.ingredients:
-            qty_needed = ingredient.quantity * order_item.quantity
-            
-            # Deduct from Inventory Item
-            inv_item = db.query(InventoryItem).filter(InventoryItem.id == ingredient.inventory_item_id).first()
-            if inv_item:
-                 inv_item.current_stock -= qty_needed
-                 
-                 # Record Transaction
-                 trans = InventoryTransaction(
-                     inventory_item_id=inv_item.id,
-                     transaction_type="CONSUMPTION",
-                     quantity=qty_needed,
-                     unit_price=inv_item.price if inv_item.price else 0.0,
-                     created_by=user.id,
-                     notes=f"Auto-deduct for Order #{order.id}: {order_item.food_item.name}"
-                 )
-                 db.add(trans)
-    
-    db.commit()
 
 @router.post("/{order_id}/mark-paid")
 def mark_order_paid(

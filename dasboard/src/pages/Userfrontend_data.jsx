@@ -5,29 +5,9 @@ import { toast } from "react-hot-toast";
 import { FaStar, FaTrashAlt, FaPencilAlt, FaPlus, FaTimes, FaMapMarkerAlt, FaImage, FaInfoCircle, FaHeart, FaCamera, FaMapMarkedAlt } from "react-icons/fa";
 import { AnimatePresence, motion } from "framer-motion";
 import { getMediaBaseUrl } from "../utils/env";
+import { getImageUrl } from "../utils/imageUtils";
 
-// Get the correct base URL based on environment
-const getImageUrl = (imagePath) => {
-  if (!imagePath) return '';
-  if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
-    return imagePath;
-  }
-  const baseUrl = getMediaBaseUrl();
-  let path = imagePath.trim().replace(/\\/g, '/');
-
-  // Ensure path starts with /
-  if (!path.startsWith('/')) path = `/${path}`;
-
-  // Fix legacy or incorrect static paths
-  if (path.includes('/static/uploads/')) {
-    path = path.replace('/static/uploads/', '/uploads/');
-  } else if (path.startsWith('/static/')) {
-    // general static fix
-    path = path.replace('/static/', '/');
-  }
-
-  return `${baseUrl}${path}`;
-};
+// Utility moved to utils/imageUtils.js
 
 const ensureHttpUrl = (url) => {
   if (!url) return "";
@@ -477,8 +457,8 @@ export default function ResortCMS() {
                 key={section.key}
                 onClick={() => setActiveSection(section.key)}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${activeSection === section.key
-                    ? 'bg-indigo-600 text-white shadow-md'
-                    : 'text-gray-700 hover:bg-gray-100'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-gray-700 hover:bg-gray-100'
                   }`}
               >
                 {section.icon}

@@ -338,8 +338,8 @@ def delete_package_booking(db: Session, booking_id: int):
     db.refresh(booking)
     return True
 def get_packages(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(Package).offset(skip).limit(limit).all()
+    return db.query(Package).options(joinedload(Package.images)).offset(skip).limit(limit).all()
 
 
 def get_package(db: Session, package_id: int):
-    return db.query(Package).filter(Package.id == package_id).first()
+    return db.query(Package).options(joinedload(Package.images)).filter(Package.id == package_id).first()

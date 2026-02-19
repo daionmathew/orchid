@@ -6,6 +6,12 @@ class FoodOrderItem(BaseModel):
     item_name: str
     quantity: int
     amount: float
+    is_paid: Optional[bool] = False
+    payment_status: Optional[str] = None
+    payment_method: Optional[str] = None
+    payment_time: Optional[str] = None
+    gst_amount: Optional[float] = 0.0
+    total_with_gst: Optional[float] = 0.0
 
     class Config:
         from_attributes = True
@@ -13,6 +19,8 @@ class FoodOrderItem(BaseModel):
 class ServiceItem(BaseModel):
     service_name: str
     charges: float
+    is_paid: Optional[bool] = False
+    payment_status: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -47,7 +55,8 @@ class BillBreakdown(BaseModel):
     service_items: List[ServiceItem] = []
     consumables_items: List[dict] = []  # Consumables charged
     asset_damages: List[dict] = []  # Asset damages
-    inventory_usage: List[dict] = []  # All inventory items used/issued
+    inventory_usage: List[dict] = []  # All inventory items used/issued (Rentals)
+    fixed_assets: List[dict] = []  # Fixed assets in room (for clarity)
     
     total_due: float = 0.0
 
@@ -123,6 +132,18 @@ class AssetDamageItem(BaseModel):
     item_name: str
     replacement_cost: float
     notes: Optional[str] = None
+    return_location_id: Optional[int] = None
+    damage_location_id: Optional[int] = None # Alias for return_location_id in some contexts
+    
+    # New fields for enhanced tracking
+    is_laundry: Optional[bool] = False
+    laundry_location_id: Optional[int] = None
+    is_waste: Optional[bool] = False
+    waste_location_id: Optional[int] = None
+    request_replacement: Optional[bool] = False
+    is_damaged: Optional[bool] = False
+    is_returned: Optional[bool] = False
+    return_location_id: Optional[int] = None # Ensure it exists or is clear
 
 class RoomVerificationData(BaseModel):
     room_number: str
@@ -157,10 +178,23 @@ class CheckoutRequest(BaseModel):
 
 class InventoryCheckItem(BaseModel):
     item_id: int
+    item_name: Optional[str] = None
+    item_code: Optional[str] = None
     used_qty: float = 0
     missing_qty: float = 0
     damage_qty: float = 0
+    allocated_stock: Optional[float] = 0.0
+    is_rentable: Optional[bool] = False
+    is_fixed_asset: Optional[bool] = False
     return_location_id: Optional[int] = None
+    damage_location_id: Optional[int] = None
+    request_replacement: Optional[bool] = False
+    
+    # New fields
+    is_laundry: Optional[bool] = False
+    laundry_location_id: Optional[int] = None
+    is_waste: Optional[bool] = False
+    waste_location_id: Optional[int] = None
 
 class InventoryCheckRequest(BaseModel):
     inventory_notes: Optional[str] = None

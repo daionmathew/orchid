@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback, memo } from "react";
 import { formatCurrency } from '../utils/currency';
+import { formatDateTimeIST } from "../utils/dateUtils";
 import API from "../services/api";
 import DashboardLayout from "../layout/DashboardLayout";
 import {
@@ -8,7 +9,14 @@ import {
   BarChart, Bar, AreaChart, Area
 } from "recharts";
 
-// Import the new bubble animation CSS
+// Import premium components
+import PremiumKPICard from "../components/PremiumKPICard";
+import QuickActions from "../components/QuickActions";
+import SmartAlerts from "../components/SmartAlerts";
+import PerformanceDashboard from "../components/PerformanceGauge";
+
+// Import premium styles
+import "../styles/premium-dashboard.css";
 import "../styles/bubble-animation.css";
 
 const COLORS = ["#6366F1", "#22C55E", "#F59E0B", "#EF4444", "#06B6D4", "#A78BFA", "#F43F5E", "#10B981", "#60A5FA", "#FBBF24"];
@@ -232,7 +240,7 @@ const Dashboard = () => {
     // Room statuses are: "Available", "Occupied", "Maintenance"
     const occupied = rooms.filter(r => {
       const status = (r.status || r.current_status || "").toLowerCase();
-      return status.includes("occupied") || status.includes("booked");
+      return status.includes("occupied") || status.includes("booked") || status.includes("checked");
     }).length;
     const available = rooms.filter(r => {
       const status = (r.status || "").toLowerCase();
@@ -240,15 +248,14 @@ const Dashboard = () => {
     }).length;
     const maintenance = rooms.filter(r => {
       const status = (r.status || "").toLowerCase();
-      return status.includes("maintenance") || status.includes("maintain");
+      return status.includes("maintenance") || status.includes("maintain") || status.includes("repair");
     }).length;
-    // Ensure counts add up correctly
-    const calculatedMaintenance = Math.max(0, total - occupied - available);
+
     return {
       total,
       occupied,
       available,
-      maintenance: maintenance > 0 ? maintenance : calculatedMaintenance
+      maintenance
     };
   }, [rooms]);
   const revenue = useMemo(() => {
@@ -588,6 +595,36 @@ const Dashboard = () => {
     };
   }, [revenue, foodOrdersMetrics, servicesMetrics, packageBookingsMetrics, expenseAgg]);
 
+  // Performance Metrics for Gauges
+  const performanceMetrics = useMemo(() => {
+    const occupancyRate = roomCounts && roomCounts.total > 0
+      ? (roomCounts.occupied / roomCounts.total) * 100
+      : 0;
+
+    const revenueTarget = 100000; // Monthly target - adjust as needed
+    const revenueProgress = revenue && revenue.month > 0
+      ? Math.min((revenue.month / revenueTarget) * 100, 100)
+      : 0;
+
+    const inventoryHealth = inventoryItems && inventoryItems.length > 0
+      ? (inventoryItems.filter(i => (i.current_stock || 0) > (i.minimum_stock || 0)).length / inventoryItems.length) * 100
+      : 0;
+
+    const serviceCompletion = assignedServices && assignedServices.length > 0
+      ? (assignedServices.filter(s => (s.status || '').toLowerCase().includes('completed')).length / assignedServices.length) * 100
+      : 0;
+
+    const profitMargin = netProfit ? Math.max(netProfit.margin || 0, 0) : 0;
+
+    return [
+      { title: 'Occupancy Rate', value: occupancyRate, max: 100, unit: '%', color: occupancyRate > 80 ? 'success' : occupancyRate > 50 ? 'warning' : 'danger', size: 'md' },
+      { title: 'Revenue Target', value: revenueProgress, max: 100, unit: '%', color: revenueProgress > 80 ? 'success' : 'primary', size: 'md' },
+      { title: 'Inventory Health', value: inventoryHealth, max: 100, unit: '%', color: inventoryHealth > 70 ? 'success' : 'warning', size: 'md' },
+      { title: 'Service Completion', value: serviceCompletion, max: 100, unit: '%', color: serviceCompletion > 80 ? 'success' : 'info', size: 'md' },
+      { title: 'Profit Margin', value: profitMargin, max: 100, unit: '%', color: profitMargin > 20 ? 'success' : profitMargin > 10 ? 'warning' : 'danger', size: 'md' }
+    ];
+  }, [roomCounts, revenue, inventoryItems, assignedServices, netProfit]);
+
   // ---------- UI ----------
   if (loading) {
     return (
@@ -716,6 +753,31 @@ const Dashboard = () => {
           <KPICard label="Low Stock Items" value={summary?.low_stock_items_count ?? inventoryMetrics.lowStock} sub="Needs attention" />
           <KPICard label="Out of Stock" value={inventoryMetrics.outOfStock} sub="Critical" />
           <KPICard label="Employees" value={summary?.active_employees ?? employeeMetrics.total} sub={`Active: ${employeeMetrics.active}`} />
+        </section>
+
+        {/* Quick Actions Panel */}
+        <section className="mb-6">
+          <QuickActions />
+        </section>
+
+        {/* Smart Alerts and Performance Metrics */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          {/* Smart Alerts - 1 column */}
+          <div className="lg:col-span-1">
+            <SmartAlerts
+              revenue={revenue}
+              roomCounts={roomCounts}
+              inventoryItems={inventoryItems}
+              expenses={expenseAgg}
+              services={assignedServices}
+              bookings={bookings}
+            />
+          </div>
+
+          {/* Performance Dashboard - 2 columns */}
+          <div className="lg:col-span-2">
+            <PerformanceDashboard metrics={performanceMetrics} />
+          </div>
         </section>
 
         {/* Charts Row 1 */}
@@ -980,7 +1042,7 @@ const Dashboard = () => {
                         </span>
                       </Td>
                       <Td className="text-right font-medium text-xs sm:text-sm">{fmtCurrency(c.grand_total)}</Td>
-                      <Td className="text-xs sm:text-sm hidden lg:table-cell">{safeDate(c.created_at)?.toLocaleDateString() || "-"}</Td>
+                      <Td className="text-xs sm:text-sm hidden lg:table-cell">{formatDateTimeIST(c.created_at)}</Td>
                     </tr>
                   ))}
                 </tbody>
@@ -1008,7 +1070,7 @@ const Dashboard = () => {
                       <Td>{p.title || "-"}</Td>
                       <Td>{fmtCurrency(p.price)}</Td>
                       <Td>{p.images?.length || 0}</Td>
-                      <Td>{safeDate(p.created_at)?.toLocaleString() || "-"}</Td>
+                      <Td>{formatDateTimeIST(p.created_at)}</Td>
                     </tr>
                   ))}
                 </tbody>
@@ -1042,7 +1104,7 @@ const Dashboard = () => {
                         </span>
                       </Td>
                       <Td className="text-right">{fmtCurrency(o.amount || o.total || 0)}</Td>
-                      <Td>{safeDate(o.created_at)?.toLocaleString() || "-"}</Td>
+                      <Td>{formatDateTimeIST(o.created_at)}</Td>
                     </tr>
                   ))}
                 </tbody>
@@ -1071,7 +1133,7 @@ const Dashboard = () => {
                         {e.note || e.description || "-"}
                       </Td>
                       <Td className="text-right">{fmtCurrency(e.amount || e.charges || 0)}</Td>
-                      <Td>{safeDate(e.created_at)?.toLocaleString() || "-"}</Td>
+                      <Td>{formatDateTimeIST(e.created_at)}</Td>
                     </tr>
                   ))}
                 </tbody>

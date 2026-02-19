@@ -56,6 +56,28 @@ API.interceptors.response.use(
       });
     }
 
+    // Handle 401 (Unauthorized) - Redirect to login
+    if (error.response?.status === 401) {
+      console.warn("Unauthorized access - redirecting to login");
+      localStorage.removeItem("token");
+
+      // Determine the correct login path based on current URL structure
+      const path = window.location.pathname;
+      let loginPath = '/'; // Default fallback
+
+      if (path.startsWith("/orchid/admin")) loginPath = "/orchid/admin";
+      else if (path.startsWith("/orchidadmin")) loginPath = "/orchidadmin";
+      else if (path.startsWith("/inventory/admin")) loginPath = "/inventory/admin";
+      else if (path.startsWith("/pommaadmin")) loginPath = "/pommaadmin";
+
+      window.location.href = loginPath;
+      return Promise.reject({
+        ...error,
+        message: "Session expired. Please log in again.",
+        isUnauthorized: true,
+      });
+    }
+
     // Handle 503 (Service Unavailable) - database connection issues
     if (error.response?.status === 503) {
       console.error("Service unavailable:", error.response?.data);

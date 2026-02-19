@@ -1839,3 +1839,9 @@ Location Stock Logic: Dest=1
   Details count: 11
 Checking if status is 'received': purchase.status = 'received'
 ENTERING stock update block for received purchase
+
+=== 2026-01-30 20:44:41.972535 ===
+[DEBUG CREATE_PURCHASE] Received purchase data:
+  Status: received
+  Destination Location ID: 1
+  Details count: 11

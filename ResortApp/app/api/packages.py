@@ -10,6 +10,8 @@ from app.utils.booking_id import parse_display_id
 from app.schemas.packages import PackageBookingCreate, PackageOut, PackageBookingOut
 from fastapi.responses import FileResponse
 from app.curd import packages as crud_package
+from app.curd import foodorder as crud_food_order
+from app.schemas.foodorder import FoodOrderCreate, FoodOrderItemCreate
 import shutil
 import uuid
 
@@ -257,7 +259,6 @@ async def update_package_api(
     package.max_stay_days = max_stay_days
     package.food_included = food_included
     package.food_timing = food_timing
-    package.status = status
     
     # Add new images if provided
     if images:
@@ -464,9 +465,9 @@ def get_bookings(db: Session = Depends(get_db), current_user: User = Depends(get
         # It's possible for a package to be deleted, leaving an orphaned booking.
         # We must filter to only include bookings that still have a valid package_id.
         result = db.query(PackageBooking).options(
-            joinedload(PackageBooking.package)
-            # Removed nested room loading to reduce query complexity
-        ).filter(PackageBooking.package_id.is_not(None)).offset(skip).limit(limit).all()
+            joinedload(PackageBooking.package),
+            joinedload(PackageBooking.rooms).joinedload(PackageBookingRoom.room)
+        ).filter(PackageBooking.package_id.is_not(None)).order_by(PackageBooking.id.desc()).offset(skip).limit(limit).all()
         
         # Fallback: Calculate total amount if 0 (for legacy data)
         for booking in result:
@@ -530,7 +531,8 @@ def _list_packages_impl(db: Session, skip: int = 0, limit: int = 20, status: str
             limit = 20
         
         # Query directly in the endpoint to apply pagination and filtering
-        query = db.query(Package)
+        # Eager-load images relationship to include them in the response
+        query = db.query(Package).options(joinedload(Package.images))
         
         if status:
             query = query.filter(Package.status == status)
@@ -559,6 +561,17 @@ def list_packages_slash(db: Session = Depends(get_db), current_user: User = Depe
 @router.get("/{package_id}", response_model=PackageOut)
 def get_package_api(package_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return crud_package.get_package(db, package_id)
+
+
+@router.get("/history/{package_id}", response_model=List[PackageBookingOut])
+def get_package_bookings_history(package_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    from sqlalchemy import desc
+    bookings = db.query(PackageBooking).options(
+        joinedload(PackageBooking.rooms).joinedload(PackageBookingRoom.room),
+        joinedload(PackageBooking.user),
+        joinedload(PackageBooking.package).joinedload(Package.images)
+    ).filter(PackageBooking.package_id == package_id).order_by(desc(PackageBooking.created_at)).all()
+    return bookings
 
 
 @router.delete("/booking/{booking_id}")
@@ -888,9 +901,9 @@ def check_in_package_booking(
                                      scheduled_dt = datetime(s_year, s_month, s_day, sh, sm)
                                  else:
                                      # Fallback to smart logic: today or tomorrow
-                                     now = datetime.now()
+                                     now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
                                      scheduled_dt = datetime.combine(check_in_date, datetime.min.time().replace(hour=sh, minute=sm))
-                                     if scheduled_dt < now:
+                                     if scheduled_dt < now_ist:
                                          scheduled_dt = scheduled_dt + timedelta(days=1)
                                  
                                  schedule_str = scheduled_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -898,54 +911,51 @@ def check_in_package_booking(
                                  # Try to find a matching Food Item to link properly, otherwise just use note
                                  food_item = db.query(FoodItem).filter(FoodItem.name.ilike(name)).first()
                                  
-                                 new_order = FoodOrder(
-                                     room_id=room_id,
-                                     amount=0.0, # Complimentary package item
-                                     status="scheduled",
-                                     billing_status="unbilled",
-                                     order_type="room_service",
-                                     delivery_request=f"SCHEDULED_FOR: {schedule_str} -- Package Meal: {name}",
-                                     created_at=datetime.utcnow()
-                                 )
-                                 db.add(new_order)
-                                 db.flush() # Get ID
-                                 
-                                 print(f"[DEBUG] Created scheduled order {new_order.id}")
-
-                                 print(f"DEBUG: Created scheduled order {new_order.id}")
-                                 
-                                 # Logic for adding items to the order
+                                 # Build items list
+                                 items_to_add = []
                                  specific_items = item.get("specificFoodItems", [])
-                                 items_added = False
-
+                                 
                                  if specific_items and len(specific_items) > 0:
-                                     print(f"DEBUG: Processing {len(specific_items)} specific food items for order {new_order.id}")
                                      for spec_item in specific_items:
                                          f_id = spec_item.get("foodItemId")
                                          qty = spec_item.get("quantity", 1)
-                                         
                                          if f_id:
-                                             f_item = db.query(FoodItem).filter(FoodItem.id == int(f_id)).first()
-                                             if f_item:
-                                                 order_item = FoodOrderItem(
-                                                     order_id=new_order.id,
-                                                     food_item_id=f_item.id,
-                                                     quantity=int(qty)
-                                                 )
-                                                 db.add(order_item)
-                                                 items_added = True
+                                             items_to_add.append(FoodOrderItemCreate(food_item_id=int(f_id), quantity=int(qty)))
                                  
-                                 # Fallback: if no specific items were added (or none selected), try to match the feature name
-                                 if not items_added:
-                                     # Try to find a matching Food Item to link properly
-                                     food_item = db.query(FoodItem).filter(FoodItem.name.ilike(name)).first()
-                                     if food_item:
-                                         order_item = FoodOrderItem(
-                                             order_id=new_order.id,
-                                             food_item_id=food_item.id,
-                                             quantity=item.get("complimentaryPerNight", 1) # Use daily qty
-                                         )
-                                         db.add(order_item)
+                                 # Fallback: find by name if no specific items
+                                 if not items_to_add:
+                                     # Try direct match
+                                     found_item = db.query(FoodItem).filter(FoodItem.name.ilike(name)).first()
+                                     
+                                     # Improved matching for common package meals
+                                     if not found_item:
+                                         if "breakfast" in name.lower():
+                                             found_item = db.query(FoodItem).filter(FoodItem.name.ilike("%breakfast%")).first()
+                                         elif "lunch" in name.lower():
+                                             found_item = db.query(FoodItem).filter(FoodItem.name.ilike("%lunch%")).first()
+                                         elif "dinner" in name.lower():
+                                             found_item = db.query(FoodItem).filter(FoodItem.name.ilike("%dinner%")).first()
+                                         elif "tea" in name.lower() or "snack" in name.lower():
+                                             found_item = db.query(FoodItem).filter(FoodItem.name.ilike("%tea%") | FoodItem.name.ilike("%snack%")).first()
+
+                                     if found_item:
+                                         qty = item.get("complimentaryPerNight", 1)
+                                         items_to_add.append(FoodOrderItemCreate(food_item_id=found_item.id, quantity=int(qty)))
+                                 
+                                 # Create the order via CRUD to ensure ServiceRequest is created
+                                 order_data = FoodOrderCreate(
+                                     room_id=room_id,
+                                     amount=0.0,
+                                     assigned_employee_id=current_user.employee.id if current_user.employee else 1,
+                                     items=items_to_add,
+                                     status="scheduled",
+                                     billing_status="unbilled",
+                                     order_type="room_service",
+                                     delivery_request=f"SCHEDULED_FOR: {schedule_str} -- Package Meal: {name}"
+                                 )
+                                 
+                                 new_order = crud_food_order.create_food_order(db, order_data)
+                                 print(f"[DEBUG] Created scheduled order {new_order.id} via CRUD")
                                  
                             except Exception as e:
                                 print(f"[ERROR] Error creating scheduled order for {name}: {e}")

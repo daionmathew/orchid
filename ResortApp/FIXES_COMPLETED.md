@@ -134,3 +134,17 @@ All code-level issues are resolved. Any remaining errors are data/schema related
 ---
 
 **Server is ready for testing!** 🚀
+
+### 4. Stock Issue Creation - Race Condition (POST /api/inventory/issues)
+
+**Problem:** Internal Server Error (500) caused by psycopg2.errors.UniqueViolation on issue_number.
+- Occurs when multiple issues are created simultaneously (e.g., during Asset Assignment loop).
+- generate_issue_number creates a calculated ID that might be claimed by another request before commit.
+
+**Solution:**
+- Implemented Retry Logic in create_stock_issue (up to 3 attempts).
+- Catches IntegrityError specifically for issue_number collisions and regenerates a new ID.
+- Added comprehensive error logging to api_stock_issue_error.log for better observability.
+
+**Status:** FIXED AND VERIFIED LOCALLY
+

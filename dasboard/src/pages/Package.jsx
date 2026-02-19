@@ -5,17 +5,13 @@ import DashboardLayout from "../layout/DashboardLayout";
 import { motion } from "framer-motion";
 import { getMediaBaseUrl } from "../utils/env";
 import {
-  Package as PackageIcon, Plus, Calendar, DollarSign,
-  Save, ArrowRight, ArrowLeft, Trash2, X, Edit, Image as ImageIcon
+  Save, ArrowRight, ArrowLeft, Trash2, X, Edit, Image as ImageIcon,
+  Plus as PlusIcon, Calendar, DollarSign, Package as PackageIcon
 } from 'lucide-react';
+import imageCompression from 'browser-image-compression';
+import { getImageUrl } from "../utils/imageUtils";
 
-const getImageUrl = (imagePath) => {
-  if (!imagePath) return 'https://placehold.co/400x300/e2e8f0/a0aec0?text=No+Image';
-  if (imagePath.startsWith('http')) return imagePath;
-  const baseUrl = getMediaBaseUrl();
-  const path = imagePath.startsWith('/') ? imagePath : `/${imagePath}`;
-  return `${baseUrl}${path}`;
-};
+// Utility moved to utils/imageUtils.js
 
 const KpiCard = ({ title, value, icon, color }) => (
   <div className={`p-6 rounded-2xl text-white shadow-lg flex items-center justify-between transition-transform duration-300 transform hover:scale-105 ${color}`}>
@@ -34,13 +30,17 @@ const Card = ({ children, title, className = "" }) => (
   </div>
 );
 
+import foodService from "../services/foodService";
+
 const Packages = ({ noLayout = false }) => {
   const [view, setView] = useState('list');
   const [packages, setPackages] = useState([]);
   const [allRooms, setAllRooms] = useState([]);
+  const [allFoodItems, setAllFoodItems] = useState([]); // New state for food items
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState(1);
+  const [selectedPackageDetail, setSelectedPackageDetail] = useState(null); // New state for details view
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -52,8 +52,7 @@ const Packages = ({ noLayout = false }) => {
     default_children: 0,
     max_stay_days: null,
     food_included: [],
-    food_timing: {},
-    food_timing: {},
+    food_timing: {}, // Will now store { "Breakfast": { time: "08:00", items: [...] }, ... } structure effectively via parsing
     images: [],
     complimentary: ''
   });
@@ -63,17 +62,29 @@ const Packages = ({ noLayout = false }) => {
 
   const fetchData = async () => {
     try {
-      const [packageRes, roomRes, bookingRes] = await Promise.all([
+      const results = await Promise.allSettled([
         api.get(`/packages/?_t=${Date.now()}`),
         api.get("/rooms/"),
-        api.get("/packages/bookingsall")
+        api.get("/packages/bookingsall"),
+        foodService.getAllFoodItems()
       ]);
-      setPackages(packageRes.data || []);
-      setAllRooms(roomRes.data || []);
-      setBookings(bookingRes.data || []);
+
+      const [packageRes, roomRes, bookingRes, foodRes] = results;
+
+      if (packageRes.status === 'fulfilled') setPackages(packageRes.value.data || []);
+      else console.error("Failed to load packages", packageRes.reason);
+
+      if (roomRes.status === 'fulfilled') setAllRooms(roomRes.value.data || []);
+      else console.error("Failed to load rooms", roomRes.reason);
+
+      if (bookingRes.status === 'fulfilled') setBookings(bookingRes.value.data || []);
+      else console.error("Failed to load bookings", bookingRes.reason);
+
+      if (foodRes.status === 'fulfilled') setAllFoodItems(foodRes.value || []);
+      else console.error("Failed to load food items", foodRes.reason);
+
     } catch (err) {
-      toast.error("Failed to load data.");
-      console.error(err);
+      console.error("Unexpected error loading data", err);
     } finally {
       setLoading(false);
     }
@@ -82,13 +93,57 @@ const Packages = ({ noLayout = false }) => {
   useEffect(() => { fetchData(); }, []);
 
   const handleInputChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    if (field === 'food_timing_mixed') {
+      // specific handler for complex food timing object updates if needed, 
+      // but generic handler below works if we pass the whole object
+      setFormData(prev => ({ ...prev, food_timing: value }));
+    } else {
+      setFormData(prev => ({ ...prev, [field]: value }));
+    }
   };
 
-  const handleImageChange = e => {
+
+  const [isCompressing, setIsCompressing] = useState(false);
+
+  const handleImageChange = async (e) => {
     const files = Array.from(e.target.files);
-    setSelectedFiles(prev => [...prev, ...files]);
-    setImagePreviews(prev => [...prev, ...files.map(f => URL.createObjectURL(f))]);
+    if (files.length === 0) return;
+
+    setIsCompressing(true);
+    const toastId = toast.loading("Compressing images...");
+
+    try {
+      const compressedFiles = await Promise.all(
+        files.map(async (file) => {
+          // Skip if not an image
+          if (!file.type.startsWith('image/')) return file;
+
+          const options = {
+            maxSizeMB: 1,
+            maxWidthOrHeight: 1920,
+            useWebWorker: true
+          };
+
+          try {
+            return await imageCompression(file, options);
+          } catch (error) {
+            console.error("Compression failed for", file.name, error);
+            return file; // Fallback to original
+          }
+        })
+      );
+
+      setSelectedFiles(prev => [...prev, ...compressedFiles]);
+      setImagePreviews(prev => [...prev, ...compressedFiles.map(f => URL.createObjectURL(f))]);
+      toast.success("Images ready!", { id: toastId });
+    } catch (err) {
+      console.error(err);
+      toast.error("Error processing images", { id: toastId });
+    } finally {
+      setIsCompressing(false);
+      // Reset input so same file can be selected again if needed
+      e.target.value = '';
+    }
   };
 
   const handleRemoveImage = (index) => {
@@ -200,36 +255,155 @@ const Packages = ({ noLayout = false }) => {
         </div>
         <div className="md:col-span-2">
           <label className="block text-sm font-medium text-gray-700 mb-2">Food Included</label>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {['Breakfast', 'Lunch', 'Dinner', 'Snacks'].map(meal => (
-              <div key={meal} className="flex flex-col gap-2 p-2 border rounded-lg hover:bg-gray-50 transition-colors">
-                <label className="flex items-center space-x-2 cursor-pointer">
-                  <input type="checkbox" checked={formData.food_included.includes(meal)} onChange={(e) => {
-                    const newMeals = e.target.checked ? [...formData.food_included, meal] : formData.food_included.filter(m => m !== meal);
-                    handleInputChange('food_included', newMeals);
-                    // Set default time if checked
-                    if (e.target.checked && !formData.food_timing?.[meal]) {
-                      const defaults = { 'Breakfast': '08:00', 'Lunch': '13:00', 'Dinner': '20:00', 'Snacks': '16:00' };
-                      handleInputChange('food_timing', { ...formData.food_timing, [meal]: defaults[meal] || '08:00' });
-                    }
-                  }} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                  <span className="text-sm font-medium text-gray-700">{meal}</span>
-                </label>
-                {formData.food_included.includes(meal) && (
-                  <div className="pl-6 animate-fadeIn">
-                    <label className="text-xs text-gray-500 block mb-1">Schedule Time</label>
-                    <input
-                      type="time"
-                      value={formData.food_timing?.[meal] || ''}
-                      onChange={(e) => handleInputChange('food_timing', { ...formData.food_timing, [meal]: e.target.value })}
-                      className="w-full text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
-                    />
+          <div className="flex flex-col gap-4">
+            {['Breakfast', 'Lunch', 'Dinner', 'Snacks'].map(meal => {
+              // Parse current timing value. It could be a string "08:00" (legacy) or object { time: "08:00", items: [] }
+              let currentTiming = formData.food_timing?.[meal];
+              let timeValue = "08:00";
+              let rawItems = [];
+
+              if (typeof currentTiming === 'string') {
+                timeValue = currentTiming;
+              } else if (typeof currentTiming === 'object' && currentTiming !== null) {
+                timeValue = currentTiming.time || "08:00";
+                rawItems = currentTiming.items || [];
+              }
+
+              // Normalize items to ensure they are objects {id, qty}
+              const selectedItems = (rawItems || []).map(item => {
+                if (typeof item === 'number' || typeof item === 'string') return { id: parseInt(item), qty: 1 };
+                return item; // Already {id, qty}
+              });
+
+              const isChecked = formData.food_included.includes(meal);
+
+              return (
+                <div key={meal} className={`flex flex-col gap-3 p-4 border rounded-xl transition-all ${isChecked ? 'bg-indigo-50 border-indigo-200 shadow-sm' : 'bg-white border-gray-200 hover:border-indigo-300'}`}>
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center space-x-3 cursor-pointer">
+                      <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${isChecked ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-gray-400'}`}>
+                        {isChecked && <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                      </div>
+                      <input type="checkbox" className="hidden" checked={isChecked} onChange={(e) => {
+                        const newMeals = e.target.checked ? [...formData.food_included, meal] : formData.food_included.filter(m => m !== meal);
+                        handleInputChange('food_included', newMeals);
+
+                        // Initialize structure if checking
+                        if (e.target.checked) {
+                          const defaults = { 'Breakfast': '08:00', 'Lunch': '13:00', 'Dinner': '20:00', 'Snacks': '16:00' };
+                          const newTime = defaults[meal] || '08:00';
+                          // Preserve existing items if re-checking
+                          const existing = typeof formData.food_timing?.[meal] === 'object' ? formData.food_timing[meal] : {};
+
+                          handleInputChange('food_timing', {
+                            ...formData.food_timing,
+                            [meal]: { time: newTime, items: existing.items || [] }
+                          });
+                        }
+                      }} />
+                      <span className={`font-semibold ${isChecked ? 'text-indigo-800' : 'text-gray-700'}`}>{meal}</span>
+                    </label>
+
+                    {isChecked && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-indigo-600 bg-indigo-100 px-2 py-1 rounded">
+                          {selectedItems.length} items
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            ))}
+
+                  {isChecked && (
+                    <div className="pl-8 grid grid-cols-1 md:grid-cols-2 gap-4 animate-fadeIn">
+                      <div>
+                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 block">Schedule Time</label>
+                        <input
+                          type="time"
+                          value={timeValue}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            handleInputChange('food_timing', {
+                              ...formData.food_timing,
+                              [meal]: { time: val, items: selectedItems }
+                            });
+                          }}
+                          className="w-full text-sm border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2 bg-white p-3 rounded-lg border border-gray-200">
+                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">Specific Food Items (Complimentary)</label>
+
+                        {/* Selected Items List with Qty */}
+                        <div className="flex flex-col gap-2 mb-3">
+                          {selectedItems.map((item, idx) => {
+                            const food = allFoodItems.find(f => f.id === item.id);
+                            if (!food) return null;
+                            return (
+                              <div key={item.id} className="flex items-center justify-between p-2 bg-indigo-50 rounded-md border border-indigo-100">
+                                <span className="text-sm font-medium text-indigo-900 truncate flex-1">{food.name} <span className="text-xs text-indigo-400 font-normal">({food.category?.name})</span></span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500">Qty:</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    className="w-16 h-8 text-sm border rounded p-1 text-center focus:ring-1 focus:ring-indigo-500"
+                                    value={item.qty || 1}
+                                    onChange={(e) => {
+                                      const newQty = parseInt(e.target.value) || 1;
+                                      const newItems = [...selectedItems];
+                                      newItems[idx] = { ...item, qty: newQty };
+                                      handleInputChange('food_timing', {
+                                        ...formData.food_timing,
+                                        [meal]: { time: timeValue, items: newItems }
+                                      });
+                                    }}
+                                  />
+                                  <button type="button" onClick={() => {
+                                    const newItems = selectedItems.filter((_, i) => i !== idx);
+                                    handleInputChange('food_timing', {
+                                      ...formData.food_timing,
+                                      [meal]: { time: timeValue, items: newItems }
+                                    });
+                                  }} className="text-red-500 hover:text-red-700 p-1 ml-2"><Trash2 size={16} /></button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {selectedItems.length === 0 && <span className="text-xs text-gray-400 italic p-2">No specific items selected (All available)</span>}
+                        </div>
+
+                        {/* Selection Logic */}
+                        <div className="relative">
+                          <select
+                            onChange={(e) => {
+                              if (!e.target.value) return;
+                              const id = parseInt(e.target.value);
+                              if (!selectedItems.some(i => i.id === id)) {
+                                const newItems = [...selectedItems, { id: id, qty: 1 }];
+                                handleInputChange('food_timing', {
+                                  ...formData.food_timing,
+                                  [meal]: { time: timeValue, items: newItems }
+                                });
+                              }
+                              e.target.value = ""; // Reset
+                            }}
+                            className="w-full text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                          >
+                            <option value="">+ Add Food Item</option>
+                            {allFoodItems.filter(f => !selectedItems.some(i => i.id === f.id)).map(f => (
+                              <option key={f.id} value={f.id}>{f.name} - ₹{f.price}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-          <p className="text-xs text-gray-500 mt-1">Select meals included in this package</p>
+          <p className="text-xs text-gray-500 mt-2">Select meals and schedule times. Optionally restrict to specific food items.</p>
         </div>
         {formData.booking_type === 'room_type' && (
           <div className="md:col-span-2">
@@ -291,6 +465,154 @@ const Packages = ({ noLayout = false }) => {
 
   const content = (
     <>
+      {selectedPackageDetail && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[70] p-4" onClick={() => setSelectedPackageDetail(null)}>
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-indigo-50">
+              <div>
+                <h2 className="text-2xl font-bold text-indigo-900">{selectedPackageDetail.title}</h2>
+                <span className="text-sm text-indigo-600 font-medium px-2 py-0.5 bg-white rounded-full mt-1 inline-block">{selectedPackageDetail.theme || 'Standard'} Package</span>
+              </div>
+              <button onClick={() => setSelectedPackageDetail(null)} className="p-2 hover:bg-white rounded-full transition-colors shadow-sm"><X className="w-6 h-6 text-indigo-900" /></button>
+            </div>
+
+            <div className="overflow-y-auto p-8 space-y-8">
+              {/* Top Section: Basic Info & Price */}
+              <div className="flex flex-col md:flex-row gap-8">
+                <div className="flex-1 space-y-4">
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Description</h3>
+                    <p className="text-gray-700 leading-relaxed">{selectedPackageDetail.description}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                      <span className="text-xs text-gray-500 block mb-1">Price</span>
+                      <span className="text-xl font-bold text-green-600">₹{selectedPackageDetail.price.toLocaleString()}</span>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                      <span className="text-xs text-gray-500 block mb-1">Max Stay</span>
+                      <span className="text-xl font-bold text-gray-800">{selectedPackageDetail.max_stay_days || 'UNLIMITED'} <span className="text-sm font-normal text-gray-500">days</span></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="md:w-72 space-y-4">
+                  <div className="p-4 bg-indigo-900 text-white rounded-2xl shadow-lg">
+                    <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest mb-3">Occupancy</h3>
+                    <div className="space-y-2 text-lg font-bold">
+                      <div className="flex justify-between"><span>Adults:</span> <span>{selectedPackageDetail.default_adults || 2}</span></div>
+                      <div className="flex justify-between"><span>Children:</span> <span>{selectedPackageDetail.default_children || 0}</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Inclusions & Rooms */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                    <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
+                    Complimentary Inclusions
+                  </h3>
+                  <div className="p-4 bg-green-50 rounded-2xl border border-green-100 min-h-[100px]">
+                    {selectedPackageDetail.complimentary ? (
+                      <ul className="space-y-2">
+                        {selectedPackageDetail.complimentary.split('\n').map((item, i) => (
+                          <li key={i} className="flex items-start gap-2 text-green-800 text-sm">
+                            <div className="mt-1.5 w-1.5 h-1.5 bg-green-500 rounded-full flex-shrink-0"></div>
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p className="text-gray-400 text-sm italic">No extra complimentary items listed.</p>}
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                    <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
+                    Valid Room Types
+                  </h3>
+                  <div className="flex flex-wrap gap-2 p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                    {selectedPackageDetail.booking_type === 'whole_property' ? (
+                      <span className="px-3 py-1 bg-white border border-indigo-200 text-indigo-700 text-sm font-bold rounded-lg shadow-sm">Whole Property Access</span>
+                    ) : (
+                      selectedPackageDetail.room_types?.split(',').map(type => (
+                        <span key={type} className="px-3 py-1 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg shadow-sm">{type}</span>
+                      )) || <span className="text-gray-400 text-sm">No room types assigned</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Food & Dining Details */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                  <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                  Dining & Meal Plan
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {['Breakfast', 'Lunch', 'Dinner', 'Snacks'].map(meal => {
+                    const isIncluded = selectedPackageDetail.food_included?.includes(meal);
+                    let timing = {};
+                    try { timing = selectedPackageDetail.food_timing ? JSON.parse(selectedPackageDetail.food_timing) : {}; } catch (e) { }
+
+                    const mealData = timing[meal] || {};
+                    const items = mealData.items || [];
+
+                    return (
+                      <div key={meal} className={`p-4 rounded-2xl border transition-all ${isIncluded ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-100 opacity-50 grayscale'}`}>
+                        <h4 className="font-extrabold text-orange-900 border-b border-orange-100 pb-2 mb-2 flex justify-between">
+                          {meal}
+                          {isIncluded && <span className="text-[10px] bg-orange-200 px-1 py-0.5 rounded uppercase">Included</span>}
+                        </h4>
+                        {isIncluded ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-1.5 text-xs text-orange-700 font-bold">
+                              <Calendar className="w-3 h-3" />
+                              {mealData.time || '--:--'}
+                            </div>
+                            <div className="space-y-1">
+                              <span className="text-[10px] text-gray-400 uppercase font-bold tracking-tighter">Selected Items:</span>
+                              {items.length > 0 ? (
+                                items.map((item, idx) => {
+                                  const food = allFoodItems.find(f => f.id === (typeof item === 'object' ? item.id : item));
+                                  return (
+                                    <div key={idx} className="flex justify-between text-xs text-orange-900 leading-tight py-1 border-b border-orange-100 last:border-0">
+                                      <span className="font-medium truncate mr-2">{food?.name || 'Item'}</span>
+                                      <span className="bg-orange-600 text-white px-1.5 rounded-full text-[10px]">x{typeof item === 'object' ? item.qty : 1}</span>
+                                    </div>
+                                  )
+                                })
+                              ) : <p className="text-[10px] text-orange-800 italic font-medium">All standard items available</p>}
+                            </div>
+                          </div>
+                        ) : <div className="h-16 flex items-center justify-center text-[10px] text-gray-400 font-bold uppercase">Not Included</div>}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Photos Gallery */}
+              {selectedPackageDetail.images && selectedPackageDetail.images.length > 0 && (
+                <div className="space-y-4 pt-4 border-t border-gray-100">
+                  <h3 className="text-sm font-bold text-gray-800">Package Gallery</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    {selectedPackageDetail.images.map((img, i) => (
+                      <img key={i} src={getImageUrl(img.image_url)} alt="" className="w-full h-24 object-cover rounded-xl shadow-sm border border-gray-100 hover:scale-110 transition-transform cursor-pointer" onClick={() => setSelectedPackageImages({ ...selectedPackageDetail, images: [img] })} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
+              <button onClick={() => setSelectedPackageDetail(null)} className="px-6 py-2 bg-white border border-gray-300 text-gray-700 rounded-xl font-bold hover:bg-gray-100 transition-colors">Close Details</button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {selectedPackageImages && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setSelectedPackageImages(null)}>
           <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
@@ -308,131 +630,145 @@ const Packages = ({ noLayout = false }) => {
           </motion.div>
         </div>
       )}
-      {view === 'list' ? (
-        <>
-          <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold text-gray-800">Package Management</h1>
-            <button onClick={() => { setView('create'); setFormData({ title: '', description: '', price: 0, booking_type: 'room_type', selected_room_types: [], theme: '', default_adults: 2, default_children: 0, max_stay_days: null, food_included: [], images: [] }); setSelectedFiles([]); setImagePreviews([]); }} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 shadow-sm">
-              <Plus className="w-5 h-5" /> Create Package
-            </button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-            <KpiCard title="Total Packages" value={packages.length} color="bg-gradient-to-r from-blue-500 to-blue-700" icon={<PackageIcon />} />
-            <KpiCard title="Total Bookings" value={bookings.length} color="bg-gradient-to-r from-green-500 to-green-700" icon={<Calendar />} />
-            <KpiCard title="Total Revenue" value={`₹${bookings.reduce((sum, b) => sum + (b.package?.price || 0), 0).toLocaleString()}`} color="bg-gradient-to-r from-purple-500 to-purple-700" icon={<DollarSign />} />
-          </div>
-          <Card title="Available Packages">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {packages.map(pkg => (
-                <motion.div key={pkg.id} whileHover={{ y: -5 }} className="bg-gray-50 rounded-xl shadow-md overflow-hidden border border-gray-200 hover:shadow-lg transition-all duration-300 flex flex-col">
-                  {pkg.images && pkg.images.length > 0 ? (
-                    <img className="h-48 w-full object-cover cursor-pointer" src={getImageUrl(pkg.images[0].image_url)} alt={pkg.title} onClick={() => setSelectedPackageImages(pkg)} />
-                  ) : (
-                    <div className="h-48 w-full bg-gray-200 flex items-center justify-center"><span className="text-gray-500">No Image</span></div>
-                  )}
-                  <div className="p-6 flex flex-col flex-grow">
-                    <h4 className="font-bold text-xl mb-2 text-gray-800">{pkg.title}</h4>
-                    <p className="text-gray-600 text-base mb-3 flex-grow">{pkg.description}</p>
-                    <div className="text-sm text-gray-500 mb-3">
-                      {pkg.theme && <div><span className="font-medium">Theme:</span> {pkg.theme}</div>}
-                      <div><span className="font-medium">Type:</span> {pkg.booking_type === 'whole_property' ? 'Whole Property' : 'Room Type'}</div>
-                      {pkg.room_types && <div><span className="font-medium">Rooms:</span> {pkg.room_types}</div>}
-                      {pkg.food_included && <div><span className="font-medium">Food:</span> {pkg.food_included}</div>}
-                      <div><span className="font-medium">Guests:</span> {pkg.default_adults || 2} Adults, {pkg.default_children || 0} Children</div>
-                      {pkg.max_stay_days && <div><span className="font-medium">Max Stay:</span> {pkg.max_stay_days} days</div>}
-                    </div>
-                    <div className="flex justify-between items-center mt-auto pt-4 border-t border-gray-200">
-                      <p className="text-green-600 font-bold text-2xl">₹{pkg.price.toLocaleString()}</p>
-                      <div className="flex gap-2">
-                        <button onClick={() => {
-                          let timing = {};
-                          try { timing = pkg.food_timing ? JSON.parse(pkg.food_timing) : {}; } catch (e) { console.error("Error parsing timing", e); }
 
-                          setView('edit');
-                          setFormData({
-                            ...pkg,
-                            selected_room_types: pkg.room_types ? pkg.room_types.split(',') : [],
-                            food_included: pkg.food_included ? pkg.food_included.split(',') : [],
-                            food_timing: timing,
-                            theme: pkg.theme || '',
-                            default_adults: pkg.default_adults || 2,
-                            default_children: pkg.default_children || 0,
-                            default_children: pkg.default_children || 0,
-                            max_stay_days: pkg.max_stay_days || null,
-                            complimentary: pkg.complimentary || ''
-                          });
-                          setSelectedFiles([]);
-                          setImagePreviews([]);
-                        }} className="text-blue-500 hover:text-blue-700 font-semibold">Edit</button>
-                        <button onClick={() => { if (window.confirm('Delete this package?')) api.delete(`/packages/${pkg.id}`).then(fetchData); }} className="text-red-500 hover:text-red-700 font-semibold">Delete</button>
-                      </div>
+      {/* ALWAYS SHOW LIST VIEW content */}
+      <div>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-gray-800">Package Management v2</h1>
+          <button onClick={() => { setView('create'); setFormData({ title: '', description: '', price: 0, booking_type: 'room_type', selected_room_types: [], theme: '', default_adults: 2, default_children: 0, max_stay_days: null, food_included: [], images: [] }); setSelectedFiles([]); setImagePreviews([]); }} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 shadow-sm">
+            <PlusIcon className="w-5 h-5" /> Create Package
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+          <KpiCard title="Total Packages" value={packages.length} color="bg-gradient-to-r from-blue-500 to-blue-700" icon={<PackageIcon />} />
+          <KpiCard title="Total Bookings" value={bookings.length} color="bg-gradient-to-r from-green-500 to-green-700" icon={<Calendar />} />
+          <KpiCard title="Total Revenue" value={`₹${bookings.reduce((sum, b) => sum + (b.package?.price || 0), 0).toLocaleString()}`} color="bg-gradient-to-r from-purple-500 to-purple-700" icon={<DollarSign />} />
+        </div>
+        <Card title="Available Packages">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {packages.map(pkg => (
+              <motion.div key={pkg.id} whileHover={{ y: -5 }} className="bg-gray-50 rounded-xl shadow-md overflow-hidden border border-gray-200 hover:shadow-lg transition-all duration-300 flex flex-col">
+                {pkg.images && pkg.images.length > 0 ? (
+                  <img className="h-48 w-full object-cover cursor-pointer" src={getImageUrl(pkg.images[0].image_url)} alt={pkg.title} onClick={() => setSelectedPackageImages(pkg)} />
+                ) : (
+                  <div className="h-48 w-full bg-gray-200 flex items-center justify-center"><span className="text-gray-500">No Image</span></div>
+                )}
+                <div className="p-6 flex flex-col flex-grow">
+                  <h4 className="font-bold text-xl mb-2 text-gray-800">{pkg.title}</h4>
+                  <p className="text-gray-600 text-base mb-3 flex-grow">{pkg.description}</p>
+                  <div className="text-sm text-gray-500 mb-3">
+                    {pkg.theme && <div><span className="font-medium">Theme:</span> {pkg.theme}</div>}
+                    <div><span className="font-medium">Type:</span> {pkg.booking_type === 'whole_property' ? 'Whole Property' : 'Room Type'}</div>
+                    {pkg.room_types && <div><span className="font-medium">Rooms:</span> {pkg.room_types}</div>}
+                    {pkg.food_included && <div><span className="font-medium">Food:</span> {pkg.food_included}</div>}
+                    <div><span className="font-medium">Guests:</span> {pkg.default_adults || 2} Adults, {pkg.default_children || 0} Children</div>
+                    {pkg.max_stay_days && <div><span className="font-medium">Max Stay:</span> {pkg.max_stay_days} days</div>}
+                  </div>
+                  <div className="flex justify-between items-center mt-auto pt-4 border-t border-gray-200">
+                    <p className="text-green-600 font-bold text-2xl">₹{pkg.price.toLocaleString()}</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setSelectedPackageDetail(pkg)} className="text-indigo-500 hover:text-indigo-700 font-semibold px-2 py-1 rounded hover:bg-indigo-50 transition-colors">View</button>
+                      <button onClick={() => {
+                        let timing = {};
+                        try { timing = pkg.food_timing ? JSON.parse(pkg.food_timing) : {}; } catch (e) { console.error("Error parsing timing", e); }
+
+                        setView('edit');
+                        setFormData({
+                          ...pkg,
+                          selected_room_types: pkg.room_types ? pkg.room_types.split(',') : [],
+                          food_included: pkg.food_included ? pkg.food_included.split(',') : [],
+                          food_timing: timing,
+                          theme: pkg.theme || '',
+                          default_adults: pkg.default_adults || 2,
+                          default_children: pkg.default_children || 0,
+                          default_children: pkg.default_children || 0,
+                          max_stay_days: pkg.max_stay_days || null,
+                          complimentary: pkg.complimentary || ''
+                        });
+                        setSelectedFiles([]);
+                        setImagePreviews([]);
+                      }} className="text-blue-500 hover:text-blue-700 font-semibold">Edit</button>
+                      <button onClick={() => { if (window.confirm('Delete this package?')) api.delete(`/packages/${pkg.id}`).then(fetchData); }} className="text-red-500 hover:text-red-700 font-semibold">Delete</button>
                     </div>
                   </div>
-                </motion.div>
-              ))}
-            </div>
-          </Card>
-          <Card title="All Package Bookings" className="mt-8">
-            <div className="overflow-x-auto">
-              <table className="min-w-full table-auto">
-                <thead className="bg-gray-100">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Guest</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Package</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Check-in</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Check-out</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {bookings.map(b => (
-                    <tr key={b.id}>
-                      <td className="px-4 py-3">{b.guest_name}</td>
-                      <td className="px-4 py-3">{b.package?.title}</td>
-                      <td className="px-4 py-3">{b.check_in}</td>
-                      <td className="px-4 py-3">{b.check_out}</td>
-                      <td className="px-4 py-3 capitalize">{b.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </>
-      ) : (
-        <div className="max-w-4xl mx-auto">
-          <div className="mb-8">
-            <button onClick={() => { setView('list'); setSelectedFiles([]); setImagePreviews([]); }} className="text-gray-500 hover:text-gray-700 flex items-center gap-1 mb-4">
-              <ArrowLeft className="w-4 h-4" /> Back
-            </button>
-            <h1 className="text-2xl font-bold text-gray-800">{view === 'create' ? 'Create New Package' : 'Edit Package'}</h1>
-            <div className="mt-6 flex items-center justify-between relative">
-              <div className="absolute left-0 top-1/2 transform -translate-y-1/2 w-full h-1 bg-gray-200 -z-10"></div>
-              {[{ num: 1, label: 'Details', icon: Edit }, { num: 2, label: 'Pricing & Images', icon: DollarSign }].map((s) => (
-                <div key={s.num} className="flex flex-col items-center bg-white px-2">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-colors ${step >= s.num ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-gray-300 text-gray-400'}`}>
-                    <s.icon className="w-5 h-5" />
-                  </div>
-                  <span className={`text-xs font-medium mt-2 ${step >= s.num ? 'text-indigo-600' : 'text-gray-400'}`}>{s.label}</span>
                 </div>
-              ))}
+              </motion.div>
+            ))}
+          </div>
+        </Card>
+        <Card title="All Package Bookings" className="mt-8">
+          <div className="overflow-x-auto">
+            <table className="min-w-full table-auto">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Guest</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Package</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Check-in</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Check-out</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {bookings.map(b => (
+                  <tr key={b.id}>
+                    <td className="px-4 py-3">{b.guest_name}</td>
+                    <td className="px-4 py-3">{b.package?.title}</td>
+                    <td className="px-4 py-3">{b.check_in}</td>
+                    <td className="px-4 py-3">{b.check_out}</td>
+                    <td className="px-4 py-3 capitalize">{b.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+
+      {/* CREATE/EDIT MODAL */}
+      {(view === 'create' || view === 'edit') && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto relative">
+            <button
+              onClick={() => { setView('list'); setSelectedFiles([]); setImagePreviews([]); }}
+              className="absolute top-6 right-6 text-gray-400 hover:text-gray-600 z-10 p-2 bg-gray-100 rounded-full"
+            >
+              <X className="w-6 h-6" />
+            </button>
+
+            <div className="p-8">
+              <div className="mb-8">
+                <h1 className="text-2xl font-bold text-gray-800">{view === 'create' ? 'Create New Package' : 'Edit Package'}</h1>
+                <div className="mt-6 flex items-center justify-between relative">
+                  <div className="absolute left-0 top-1/2 transform -translate-y-1/2 w-full h-1 bg-gray-200 -z-10"></div>
+                  {[{ num: 1, label: 'Details', icon: Edit }, { num: 2, label: 'Pricing & Images', icon: DollarSign }].map((s) => (
+                    <div key={s.num} className="flex flex-col items-center bg-white px-2">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-colors ${step >= s.num ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-gray-300 text-gray-400'}`}>
+                        <s.icon className="w-5 h-5" />
+                      </div>
+                      <span className={`text-xs font-medium mt-2 ${step >= s.num ? 'text-indigo-600' : 'text-gray-400'}`}>{s.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-gray-200 p-6 min-h-[400px]">
+                {step === 1 && renderStep1()}
+                {step === 2 && renderStep2()}
+              </div>
+
+              <div className="mt-6 flex justify-between">
+                <button onClick={() => setStep(prev => Math.max(1, prev - 1))} disabled={step === 1} className={`px-6 py-2 rounded-lg font-medium ${step === 1 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'}`}>Previous</button>
+                {step < 2 ? (
+                  <button onClick={() => setStep(prev => Math.min(2, prev + 1))} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium flex items-center gap-2">
+                    Next <ArrowRight className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <button onClick={handleWizardSubmit} className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center gap-2">
+                    <Save className="w-4 h-4" /> {view === 'create' ? 'Create' : 'Update'} Package
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-8 min-h-[400px]">
-            {step === 1 && renderStep1()}
-            {step === 2 && renderStep2()}
-          </div>
-          <div className="mt-6 flex justify-between">
-            <button onClick={() => setStep(prev => Math.max(1, prev - 1))} disabled={step === 1} className={`px-6 py-2 rounded-lg font-medium ${step === 1 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'}`}>Previous</button>
-            {step < 2 ? (
-              <button onClick={() => setStep(prev => Math.min(2, prev + 1))} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium flex items-center gap-2">
-                Next <ArrowRight className="w-4 h-4" />
-              </button>
-            ) : (
-              <button onClick={handleWizardSubmit} className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium flex items-center gap-2">
-                <Save className="w-4 h-4" /> {view === 'create' ? 'Create' : 'Update'} Package
-              </button>
-            )}
           </div>
         </div>
       )}

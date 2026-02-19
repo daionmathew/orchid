@@ -1,7 +1,7 @@
 """
 Pydantic schemas for Recipe management
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -31,9 +31,16 @@ class RecipeCreate(BaseModel):
     name: str
     description: Optional[str] = None
     servings: int = 1
-    prep_time_minutes: Optional[int] = None
-    cook_time_minutes: Optional[int] = None
+    prep_time_minutes: int
+    cook_time_minutes: int
     ingredients: List[RecipeIngredientCreate] = []
+
+    @field_validator('prep_time_minutes', 'cook_time_minutes', mode='before')
+    @classmethod
+    def empty_string_to_none(cls, v):
+        if v == "":
+            return None
+        return v
 
 
 class RecipeUpdate(BaseModel):
@@ -43,6 +50,13 @@ class RecipeUpdate(BaseModel):
     prep_time_minutes: Optional[int] = None
     cook_time_minutes: Optional[int] = None
     ingredients: Optional[List[RecipeIngredientCreate]] = None
+
+    @field_validator('prep_time_minutes', 'cook_time_minutes', 'servings', mode='before')
+    @classmethod
+    def empty_string_to_none(cls, v):
+        if v == "":
+            return None
+        return v
 
 
 class RecipeOut(BaseModel):
@@ -61,6 +75,3 @@ class RecipeOut(BaseModel):
     
     class Config:
         from_attributes = True
-
-
-

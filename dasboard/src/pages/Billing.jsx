@@ -12,6 +12,7 @@ import { useInfiniteScroll } from "./useInfiniteScroll";
 import logo from '../assets/logo.jpeg';
 import { formatCurrency } from '../utils/currency';
 import { getApiBaseUrl } from "../utils/env";
+import { formatDateIST, formatDateTimeIST } from "../utils/dateUtils";
 
 
 // --- Placeholder for DashboardLayout ---
@@ -92,7 +93,115 @@ const CheckoutDetailModal = React.memo(({ checkout, onClose }) => {
     }
   }, [checkout]);
 
+  const handleViewBill = () => {
+    if (details?.invoice_pdf_path) {
+      // Download the PDF from the server
+      const apiBaseUrl = window.location.origin + '/orchidapi';
+      const pdfUrl = `${apiBaseUrl}/${details.invoice_pdf_path}`;
+      window.open(pdfUrl, '_blank');
+    }
+  };
+
   if (!checkout) return null;
+
+  // Debug logging
+  if (details) {
+    console.log("Checkout Details:", details);
+    console.log("Bill Details:", details.bill_details);
+    console.log("Invoice PDF Path:", details.invoice_pdf_path);
+  }
+
+  const handleDownloadPDF = () => {
+    if (!details) return;
+
+    const doc = new jsPDF();
+
+    // 1. Header
+    doc.addImage(logo, 'JPEG', 14, 15, 30, 15);
+    doc.setFontSize(22);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Resort Invoice', 105, 25, { align: 'center' });
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('ORCHID TRAILS RESORT', 190, 20, { align: 'right' });
+    doc.text('Waynad, Kerala', 190, 25, { align: 'right' });
+
+    // 2. Info
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Bill To:', 14, 45);
+    doc.setFont('helvetica', 'normal');
+    doc.text(details.guest_name || 'N/A', 14, 51);
+    doc.text(`Rooms: ${details.room_numbers?.join(', ') || details.room_number || 'N/A'}`, 14, 57);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Bill ID:', 140, 45);
+    doc.setFont('helvetica', 'normal');
+    doc.text(details.id.toString(), 160, 45);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Date:', 140, 51);
+    doc.setFont('helvetica', 'normal');
+    doc.text(formatDateIST(details.created_at), 160, 51);
+
+    // 3. Charges table
+    const chargesBody = [];
+    if (details.room_total > 0) chargesBody.push(['Room Charges', '', formatCurrency(details.room_total)]);
+    if (details.package_total > 0) chargesBody.push(['Package Charges', '', formatCurrency(details.package_total)]);
+
+    details.food_orders?.forEach(order => {
+      order.items?.forEach(item => {
+        chargesBody.push([`Food: ${item.item_name}`, `x${item.quantity}`, formatCurrency(item.total)]);
+      });
+    });
+
+    details.services?.forEach(service => {
+      chargesBody.push([`Service: ${service.service_name}`, '', formatCurrency(service.charges)]);
+    });
+
+    details.bill_details?.consumables_items?.forEach(item => {
+      chargesBody.push([`Consumable: ${item.item_name}`, `x${item.quantity || item.actual_consumed}`, formatCurrency(item.total_charge)]);
+    });
+
+    details.bill_details?.inventory_usage?.forEach(item => {
+      chargesBody.push([`Rental: ${item.item_name}`, `x${item.quantity} ${item.unit || ''}`, formatCurrency(item.rental_charge || 0)]);
+    });
+
+    details.bill_details?.asset_damages?.forEach(item => {
+      chargesBody.push([`Damage: ${item.item_name}`, item.notes || '', formatCurrency(item.total_charge || item.replacement_cost)]);
+    });
+
+    autoTable(doc, {
+      startY: 65,
+      head: [['Description', 'Details', 'Amount']],
+      body: chargesBody,
+      theme: 'striped',
+      headStyles: { fillColor: [79, 70, 229] }
+    });
+
+    // 4. Totals
+    const totalsY = doc.lastAutoTable.finalY + 10;
+    const totals = [
+      ['Subtotal', formatCurrency(details.grand_total - details.tax_amount + details.discount_amount)],
+      ['Tax', `+${formatCurrency(details.tax_amount)}`],
+      ['Discount', `-${formatCurrency(details.discount_amount)}`],
+      ['Grand Total', formatCurrency(details.grand_total)]
+    ];
+
+    autoTable(doc, {
+      startY: totalsY,
+      body: totals,
+      theme: 'plain',
+      tableWidth: 'wrap',
+      margin: { left: 120 },
+      styles: { cellPadding: 1.5, fontSize: 11 },
+      columnStyles: {
+        0: { fontStyle: 'bold', halign: 'right' },
+        1: { fontStyle: 'bold', halign: 'right' }
+      }
+    });
+
+    doc.save(`bill-${details.id}.pdf`);
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4 overflow-y-auto">
@@ -100,7 +209,33 @@ const CheckoutDetailModal = React.memo(({ checkout, onClose }) => {
         <button onClick={onClose} className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 z-10">
           <X size={24} />
         </button>
-        <h2 className="text-2xl font-bold text-gray-800 mb-4">Checkout Details (ID: {checkout.id})</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-bold text-gray-800">Checkout Details (ID: {checkout.id})</h2>
+          <div className="flex gap-2">
+            {!details?.invoice_pdf_path && (
+              <button
+                onClick={handleDownloadPDF}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors print:hidden"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download PDF
+              </button>
+            )}
+            {details?.invoice_pdf_path && (
+              <button
+                onClick={handleViewBill}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors print:hidden"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+                View Bill PDF
+              </button>
+            )}
+          </div>
+        </div>
 
         {loading ? (
           <div className="text-center py-8">Loading details...</div>
@@ -118,7 +253,7 @@ const CheckoutDetailModal = React.memo(({ checkout, onClose }) => {
               </div>
               <div>
                 <p className="text-sm text-gray-500">Checkout Date</p>
-                <p className="font-semibold">{new Date(details.created_at).toLocaleString()}</p>
+                <p className="font-semibold">{formatDateTimeIST(details.created_at)}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-500">Payment Method</p>
@@ -180,7 +315,7 @@ const CheckoutDetailModal = React.memo(({ checkout, onClose }) => {
                         <div>
                           <p className="font-semibold">Order #{order.id}</p>
                           <p className="text-sm text-gray-500">Room: {order.room_number}</p>
-                          <p className="text-sm text-gray-500">{new Date(order.created_at).toLocaleString()}</p>
+                          <p className="text-sm text-gray-500">{formatDateTimeIST(order.created_at)}</p>
                         </div>
                         <div className="text-right">
                           <p className="font-semibold text-indigo-600">{formatCurrency(order.amount)}</p>
@@ -212,7 +347,7 @@ const CheckoutDetailModal = React.memo(({ checkout, onClose }) => {
                         <p className="font-semibold">{service.service_name}</p>
                         <p className="text-sm text-gray-500">Room: {service.room_number}</p>
                         {service.created_at && (
-                          <p className="text-xs text-gray-400">{new Date(service.created_at).toLocaleString()}</p>
+                          <p className="text-xs text-gray-400">{formatDateTimeIST(service.created_at)}</p>
                         )}
                       </div>
                       <div className="text-right">
@@ -241,12 +376,39 @@ const CheckoutDetailModal = React.memo(({ checkout, onClose }) => {
                       </div>
                       <div className="text-right">
                         <p className="font-semibold text-indigo-600">{formatCurrency(item.total_charge)}</p>
-                        <p className="text-xs text-gray-400">@ {formatCurrency(item.charge_per_unit)}</p>
+                        <p className="text-xs text-gray-400">@ {formatCurrency(item.charge_per_unit || 0)}</p>
                       </div>
                     </div>
                   ))}
                   <div className="flex justify-end pt-2 text-sm font-medium">
-                    <span>Subtotal: {formatCurrency(details.bill_details.consumables_charges || 0)}</span>
+                    <span>Subtotal: {formatCurrency(details.consumables_charges || details.bill_details.consumables_charges || 0)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Inventory Rentals (from bill_details) */}
+            {details.bill_details?.inventory_usage?.length > 0 && (
+              <div className="border-t pt-4">
+                <h3 className="text-lg font-semibold mb-3">Rentals / Inventory</h3>
+                <div className="space-y-2">
+                  {details.bill_details.inventory_usage.map((item, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-blue-50 p-3 rounded-lg border border-blue-100">
+                      <div className="flex-1">
+                        <p className="font-semibold text-blue-800">{item.item_name}</p>
+                        <p className="text-sm text-blue-600">
+                          Qty: {item.quantity} {item.unit || ''}
+                          {item.room_number && <span className="ml-2">Room: {item.room_number}</span>}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold text-blue-800">{formatCurrency(item.rental_charge || 0)}</p>
+                        {item.rental_price > 0 && <p className="text-xs text-blue-400">@ {formatCurrency(item.rental_price)}</p>}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex justify-end pt-2 text-sm font-medium text-blue-800">
+                    <span>Subtotal: {formatCurrency(details.inventory_charges || details.bill_details.inventory_charges || 0)}</span>
                   </div>
                 </div>
               </div>
@@ -269,7 +431,7 @@ const CheckoutDetailModal = React.memo(({ checkout, onClose }) => {
                     </div>
                   ))}
                   <div className="flex justify-end pt-2 text-sm font-bold text-red-700">
-                    <span>Total Damages: {formatCurrency(details.bill_details.asset_damage_charges || 0)}</span>
+                    <span>Total Damages: {formatCurrency(details.asset_damage_charges || details.bill_details.asset_damage_charges || 0)}</span>
                   </div>
                 </div>
               </div>
@@ -303,22 +465,22 @@ const CheckoutDetailModal = React.memo(({ checkout, onClose }) => {
                     <span className="font-medium">{formatCurrency(details.service_total)}</span>
                   </div>
                 )}
-                {(details.bill_details?.consumables_charges > 0) && (
+                {(details.consumables_charges > 0 || details.bill_details?.consumables_charges > 0) && (
                   <div className="flex justify-between">
                     <span>Consumables:</span>
-                    <span className="font-medium">{formatCurrency(details.bill_details.consumables_charges)}</span>
+                    <span className="font-medium">{formatCurrency(details.consumables_charges || details.bill_details.consumables_charges)}</span>
                   </div>
                 )}
-                {(details.bill_details?.inventory_charges > 0) && (
+                {(details.inventory_charges > 0 || details.bill_details?.inventory_charges > 0) && (
                   <div className="flex justify-between">
                     <span>Inventory Charges:</span>
-                    <span className="font-medium">{formatCurrency(details.bill_details.inventory_charges)}</span>
+                    <span className="font-medium">{formatCurrency(details.inventory_charges || details.bill_details.inventory_charges)}</span>
                   </div>
                 )}
-                {(details.bill_details?.asset_damage_charges > 0) && (
+                {(details.asset_damage_charges > 0 || details.bill_details?.asset_damage_charges > 0) && (
                   <div className="flex justify-between text-red-600">
                     <span>Asset Damages:</span>
-                    <span className="font-medium">{formatCurrency(details.bill_details.asset_damage_charges)}</span>
+                    <span className="font-medium">{formatCurrency(details.asset_damage_charges || details.bill_details.asset_damage_charges)}</span>
                   </div>
                 )}
                 {details.tax_amount > 0 && (
@@ -384,6 +546,18 @@ const Billing = () => {
   const [toDate, setToDate] = useState("");
   const [minAmount, setMinAmount] = useState("");
   const [maxAmount, setMaxAmount] = useState("");
+
+  // Resort settings state
+  const [resortSettings, setResortSettings] = useState({
+    resort_name: "Your Resort Name",
+    resort_address: "123 Paradise Lane, Beach City",
+    resort_phone: "",
+    resort_email: "contact@yourresort.com",
+    resort_website: "",
+    gst_number: "",
+    license_number: "",
+    resort_location: ""
+  });
 
   // Function to show banner message
   const showBannerMessage = (type, text) => {
@@ -526,7 +700,25 @@ const Billing = () => {
     fetchInitialData();
   }, []);
 
-  const fetchInitialData = async () => {
+  // Fetch resort settings
+  useEffect(() => {
+    const fetchResortSettings = async () => {
+      try {
+        const response = await api.get('/settings/');
+        const settingsArray = response.data || [];
+        const settingsObj = {};
+        settingsArray.forEach(setting => {
+          settingsObj[setting.key] = setting.value;
+        });
+        setResortSettings(prev => ({ ...prev, ...settingsObj }));
+      } catch (error) {
+        console.error('Failed to fetch resort settings:', error);
+      }
+    };
+    fetchResortSettings();
+  }, []);
+
+  const fetchInitialData = useCallback(async () => {
     setLoading(true);
     try {
       // Fetch all necessary data in parallel using Promise.allSettled to handle individual failures
@@ -626,7 +818,7 @@ const Billing = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Fetch checkout request status when room number changes
   useEffect(() => {
@@ -974,33 +1166,83 @@ const Billing = () => {
 
     const doc = new jsPDF();
 
-    // 1. Add Logo and Hotel Info
-    doc.addImage(logo, 'PNG', 14, 15, 30, 15); // Adjust position and size as needed
-    doc.setFontSize(22);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Resort Invoice', 105, 25, { align: 'center' });
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text('Your Resort Name', 190, 20, { align: 'right' });
-    doc.text('123 Paradise Lane, Beach City', 190, 25, { align: 'right' });
-    doc.text('contact@yourresort.com', 190, 30, { align: 'right' });
+    // 1. Add Logo and Resort Info Header
+    doc.addImage(logo, 'PNG', 14, 10, 30, 15); // Logo on the left
 
-    // 2. Bill Details
+    // Resort Name as main title (centered)
+    doc.setFontSize(20);
+    doc.setFont('helvetica', 'bold');
+    doc.text(resortSettings.resort_name || 'Resort Invoice', 105, 15, { align: 'center' });
+
+    // Invoice subtitle
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    doc.text('TAX INVOICE', 105, 21, { align: 'center' });
+
+    // Resort contact details (right side)
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    let yPos = 12;
+
+    if (resortSettings.resort_address) {
+      const addressLines = doc.splitTextToSize(resortSettings.resort_address, 70);
+      addressLines.forEach(line => {
+        doc.text(line, 200, yPos, { align: 'right' });
+        yPos += 4;
+      });
+    }
+
+    if (resortSettings.resort_phone) {
+      doc.text(`Phone: ${resortSettings.resort_phone}`, 200, yPos, { align: 'right' });
+      yPos += 4;
+    }
+
+    if (resortSettings.resort_email) {
+      doc.text(`Email: ${resortSettings.resort_email}`, 200, yPos, { align: 'right' });
+      yPos += 4;
+    }
+
+    if (resortSettings.resort_website) {
+      doc.text(`Web: ${resortSettings.resort_website}`, 200, yPos, { align: 'right' });
+      yPos += 4;
+    }
+
+    // GST and License info
+    if (resortSettings.gst_number) {
+      doc.setFont('helvetica', 'bold');
+      doc.text(`GSTIN: ${resortSettings.gst_number}`, 200, yPos, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      yPos += 4;
+    }
+
+    if (resortSettings.license_number) {
+      doc.text(`License: ${resortSettings.license_number}`, 200, yPos, { align: 'right' });
+      yPos += 4;
+    }
+
+    // Horizontal line separator
+    doc.setDrawColor(200, 200, 200);
+    const separatorY = Math.max(yPos + 2, 32);
+    doc.line(14, separatorY, 196, separatorY);
+
+    // 2. Bill Details (positioned after header)
+    const billDetailsStartY = separatorY + 8;
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
-    doc.text('Bill To:', 14, 45);
+    doc.text('Bill To:', 14, billDetailsStartY);
     doc.setFont('helvetica', 'normal');
-    doc.text(billData.guest_name, 14, 51);
-    doc.text(`Rooms: ${billData.room_numbers.join(', ')}`, 14, 57);
+    doc.text(billData.guest_name, 14, billDetailsStartY + 6);
+    doc.text(`Rooms: ${billData.room_numbers.join(', ')}`, 14, billDetailsStartY + 12);
 
     doc.setFont('helvetica', 'bold');
-    doc.text('Check-in:', 130, 45);
+    doc.text('Check-in:', 130, billDetailsStartY);
     doc.setFont('helvetica', 'normal');
-    doc.text(new Date(billData.check_in).toLocaleDateString(), 150, 45);
+    doc.text(new Date(billData.check_in).toLocaleDateString(), 150, billDetailsStartY);
     doc.setFont('helvetica', 'bold');
-    doc.text('Check-out:', 130, 51);
+    doc.text('Check-out:', 130, billDetailsStartY + 6);
     doc.setFont('helvetica', 'normal');
-    doc.text(new Date(billData.check_out).toLocaleDateString(), 150, 51);
+    doc.text(new Date(billData.check_out).toLocaleDateString(), 150, billDetailsStartY + 6);
+
 
     // 3. Itemized Charges Table
     const chargesBody = [];
@@ -1054,7 +1296,7 @@ const Billing = () => {
     }
 
     autoTable(doc, {
-      startY: 65,
+      startY: billDetailsStartY + 20,
       head: [['Description', 'Details', 'Amount']],
       body: chargesBody,
       theme: 'striped',

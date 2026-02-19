@@ -39,7 +39,7 @@ def start():
     env = os.environ.copy()
     env["DATABASE_URL"] = db_url
 
-    print("🚀 Starting uvicorn...")
+    print("Starting uvicorn...")
     # Run uvicorn
     # uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     # Assume main.py is in current dir, so "main:app"

@@ -55,11 +55,11 @@ else:
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     connect_args=connect_args,
-    pool_size=20,  # Increased pool size for multiple workers (production)
-    max_overflow=30,  # Additional connections that can be created on demand
+    pool_size=50,  # Increased pool size to prevent exhaustion
+    max_overflow=50,  # Increased overflow
     pool_pre_ping=True,  # Verify connections before use (fixes connection drops)
     pool_recycle=1800,  # Recycle connections after 30 minutes to prevent stale connections
-    pool_timeout=30,  # Timeout for getting connection from pool
+    pool_timeout=60,  # Increased timeout for getting connection from pool
     echo=False,  # Set to True for SQL query logging
     execution_options={
         "isolation_level": "READ COMMITTED"  # Better concurrency with read committed

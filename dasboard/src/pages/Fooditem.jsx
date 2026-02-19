@@ -1,18 +1,16 @@
 import React, { useEffect, useState } from "react";
 import DashboardLayout from "../layout/DashboardLayout";
 import API from "../services/api";
-import { getMediaBaseUrl } from "../utils/env";
 import { normalizeQuantity } from "../utils/quantityValidation";
 import { ChefHat, Plus, X, ChevronDown, ChevronUp } from "lucide-react";
 
-// Helper function to construct image URLs
-const getImageUrl = (imagePath) => {
-  if (!imagePath) return 'https://placehold.co/400x300/e2e8f0/a0aec0?text=No+Image';
-  if (imagePath.startsWith('http')) return imagePath;
-  const baseUrl = getMediaBaseUrl();
-  const path = imagePath.startsWith('/') ? imagePath : `/${imagePath}`;
-  return `${baseUrl}${path}`;
-};
+import { toast } from "react-hot-toast";
+import imageCompression from 'browser-image-compression';
+
+import { motion } from "framer-motion";
+import { getImageUrl } from "../utils/imageUtils";
+
+// Utility moved to utils/imageUtils.js
 
 const bgColors = [
   "bg-red-50",
@@ -35,6 +33,7 @@ const FoodItems = () => {
   const [foodItems, setFoodItems] = useState([]);
   const [editingItemId, setEditingItemId] = useState(null);
   const [available, setAvailable] = useState(true);
+  const [isCompressing, setIsCompressing] = useState(false);
 
   // Recipe/Ingredients state
   const [showIngredients, setShowIngredients] = useState(false);
@@ -93,11 +92,46 @@ const FoodItems = () => {
     }
   };
 
-  const handleImageChange = (e) => {
-    const newFiles = Array.from(e.target.files);
-    setImages((prevImages) => [...prevImages, ...newFiles]);
-    const newPreviews = newFiles.map((file) => URL.createObjectURL(file));
-    setImagePreviews((prev) => [...prev, ...newPreviews]);
+  const handleImageChange = async (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+
+    setIsCompressing(true);
+    const toastId = toast.loading("Compressing images...");
+
+    try {
+      const compressedFiles = await Promise.all(
+        files.map(async (file) => {
+          // Skip if not an image
+          if (!file.type.startsWith('image/')) return file;
+
+          const options = {
+            maxSizeMB: 1,
+            maxWidthOrHeight: 1920,
+            useWebWorker: true
+          };
+
+          try {
+            return await imageCompression(file, options);
+          } catch (error) {
+            console.error("Compression failed for", file.name, error);
+            return file; // Fallback to original
+          }
+        })
+      );
+
+      setImages((prevImages) => [...prevImages, ...compressedFiles]);
+      const newPreviews = compressedFiles.map((file) => URL.createObjectURL(file));
+      setImagePreviews((prev) => [...prev, ...newPreviews]);
+      toast.success("Images ready!", { id: toastId });
+    } catch (err) {
+      console.error(err);
+      toast.error("Error processing images", { id: toastId });
+    } finally {
+      setIsCompressing(false);
+      // Reset input so same file can be selected again
+      e.target.value = '';
+    }
   };
 
   const handleRemoveImage = (index) => {

@@ -119,13 +119,17 @@ const ItemFormModal = ({
                                 </label>
                                 <select
                                     value={form.category_id}
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                        const catId = parseInt(e.target.value);
+                                        const selectedCat = categories.find((c) => c.id === catId);
                                         setForm({
                                             ...form,
                                             category_id: e.target.value,
                                             sub_category: "",
-                                        })
-                                    }
+                                            // Auto-select fixed asset if category is fixed asset
+                                            is_asset_fixed: selectedCat?.is_asset_fixed || form.is_asset_fixed,
+                                        });
+                                    }}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                     required
                                 >
@@ -318,6 +322,30 @@ const ItemFormModal = ({
                                 <label className="flex items-center cursor-pointer">
                                     <input
                                         type="checkbox"
+                                        checked={form.is_asset_fixed}
+                                        onChange={(e) =>
+                                            setForm({
+                                                ...form,
+                                                is_asset_fixed: e.target.checked,
+                                            })
+                                        }
+                                        disabled={selectedCategory?.is_asset_fixed} // Disable if enforced by category
+                                        className={`w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 ${selectedCategory?.is_asset_fixed ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    />
+                                    <span className="ml-2 text-sm font-medium text-gray-700">
+                                        Is Fixed Asset?
+                                    </span>
+                                </label>
+                                <span className="ml-2 text-xs text-gray-500">
+                                    {selectedCategory?.is_asset_fixed
+                                        ? "(Enforced by Category)"
+                                        : "(e.g., TV, AC, Furniture)"}
+                                </span>
+                            </div>
+                            <div className="flex items-center pt-6">
+                                <label className="flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
                                         checked={form.track_laundry_cycle}
                                         onChange={(e) =>
                                             setForm({
@@ -408,35 +436,34 @@ const ItemFormModal = ({
                                     </span>
                                 </label>
                                 <span className="ml-2 text-xs text-gray-500">
-                                    (Vegetables: No, Soft Drinks: Yes)
+                                    (e.g., Soft Drinks, Snacks, Extra Water)
                                 </span>
                             </div>
-                            {form.is_sellable_to_guest && (
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Selling Price (MRP)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        value={form.selling_price}
-                                        onChange={(e) =>
-                                            setForm({
-                                                ...form,
-                                                selling_price: e.target.value
-                                                    ? parseFloat(e.target.value)
-                                                    : "",
-                                            })
-                                        }
-                                        placeholder="0.00"
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    />
-                                    <p className="text-xs text-gray-500 mt-1">
-                                        Price charged to guest if consumed
-                                    </p>
-                                </div>
-                            )}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Selling Price (MRP)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={form.selling_price}
+                                    onChange={(e) => {
+                                        const price = e.target.value;
+                                        setForm({
+                                            ...form,
+                                            selling_price: price ? parseFloat(price) : "",
+                                            // Automatically check "Sellable" if a price > 0 is entered
+                                            is_sellable_to_guest: price && parseFloat(price) > 0 ? true : form.is_sellable_to_guest
+                                        });
+                                    }}
+                                    placeholder="0.00"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Price charged to guest (leave 0 if only for internal use)
+                                </p>
+                            </div>
                         </div>
                     </div>
 

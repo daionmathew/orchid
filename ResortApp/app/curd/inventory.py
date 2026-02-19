@@ -56,7 +56,7 @@ def create_item(db: Session, data: InventoryItemCreate):
     return item
 
 
-def get_all_items(db: Session, skip: int = 0, limit: int = 100, category_id: Optional[int] = None, active_only: bool = True):
+def get_all_items(db: Session, skip: int = 0, limit: int = 100, category_id: Optional[int] = None, active_only: bool = True, is_fixed_asset: Optional[bool] = None):
     """Optimized with eager loading to prevent N+1 queries"""
     query = db.query(InventoryItem).options(
         joinedload(InventoryItem.category),
@@ -66,6 +66,8 @@ def get_all_items(db: Session, skip: int = 0, limit: int = 100, category_id: Opt
         query = query.filter(InventoryItem.category_id == category_id)
     if active_only:
         query = query.filter(InventoryItem.is_active == True)
+    if is_fixed_asset is not None:
+        query = query.filter(InventoryItem.is_asset_fixed == is_fixed_asset)
     return query.offset(skip).limit(limit).all()
 
 
@@ -424,20 +426,27 @@ def update_purchase_master(db: Session, purchase_id: int, data: PurchaseMasterUp
     return purchase
 
 
-def update_purchase_status(db: Session, purchase_id: int, status: str):
-    """Update purchase status and handle inventory if received"""
+def update_purchase_status(db: Session, purchase_id: int, status: str, current_user_id: int = None):
+    """
+    Update purchase status and handle inventory if received.
+    Now handles both receiving (stock in) and cancellation (stock out if previously received).
+    """
     purchase = get_purchase_by_id(db, purchase_id)
     if not purchase:
         return None
     
-    old_status = purchase.status
-    purchase.status = status
+    old_status = purchase.status.lower() if purchase.status else ""
+    new_status = status.lower()
     
-    # If changing to received, update inventory
-    if old_status.lower() != "received" and status.lower() == "received":
-        from datetime import datetime
-        from app.models.inventory import LocationStock, InventoryTransaction
+    # If no change, just return
+    if old_status == new_status:
+        return purchase
+
+    from datetime import datetime
+    from app.models.inventory import LocationStock, InventoryTransaction
         
+    # CASE 1: Transition TO RECEIVED (Stock In)
+    if old_status != "received" and new_status == "received":
         # Use a list to avoid iterator issues during commits
         details = list(purchase.details)
         for detail in details:
@@ -464,26 +473,99 @@ def update_purchase_status(db: Session, purchase_id: int, status: str):
                     )
                     db.add(loc_stock)
             
-            # Create transaction if not exists
-            existing_transaction = db.query(InventoryTransaction).filter(
-                InventoryTransaction.purchase_master_id == purchase_id,
-                InventoryTransaction.item_id == detail.item_id
+            # Create transaction
+            u_price = float(detail.unit_price or 0)
+            transaction = InventoryTransaction(
+                item_id=detail.item_id,
+                transaction_type="in",
+                quantity=float(detail.quantity or 0),
+                unit_price=u_price,
+                total_amount=u_price * float(detail.quantity or 0),
+                reference_number=purchase.purchase_number,
+                purchase_master_id=purchase.id,
+                notes=f"Purchase received: {purchase.purchase_number}",
+                created_by=current_user_id or purchase.created_by
+            )
+            db.add(transaction)
+
+        # Trigger Journal Entry Creation
+        try:
+            from app.utils.accounting_helpers import create_purchase_journal_entry
+            from app.api.gst_reports import RESORT_STATE_CODE
+            from app.models.account import JournalEntry
+            
+            # Check if entry already exists
+            existing_entry = db.query(JournalEntry).filter(
+                JournalEntry.reference_type == "purchase",
+                JournalEntry.reference_id == purchase.id
             ).first()
-            if not existing_transaction:
-                u_price = float(detail.unit_price or 0)
-                transaction = InventoryTransaction(
-                    item_id=detail.item_id,
-                    transaction_type="in",
-                    quantity=float(detail.quantity or 0),
-                    unit_price=u_price,
-                    total_amount=u_price * float(detail.quantity or 0),
-                    reference_number=purchase.purchase_number,
-                    purchase_master_id=purchase.id,
-                    notes=f"Purchase: {purchase.purchase_number}",
-                    created_by=purchase.created_by
+            
+            if not existing_entry:
+                vendor = get_vendor_by_id(db, purchase.vendor_id)
+                vendor_name = (vendor.legal_name or vendor.name) if vendor else "Unknown"
+                
+                # Determine if inter-state
+                is_interstate = False
+                if vendor and vendor.gst_number and len(vendor.gst_number) >= 2:
+                    is_interstate = vendor.gst_number[:2] != RESORT_STATE_CODE
+                
+                create_purchase_journal_entry(
+                    db=db,
+                    purchase_id=purchase.id,
+                    vendor_id=purchase.vendor_id,
+                    inventory_amount=float(purchase.sub_total or 0),
+                    cgst_amount=float(purchase.cgst or 0),
+                    sgst_amount=float(purchase.sgst or 0),
+                    igst_amount=float(purchase.igst or 0),
+                    vendor_name=vendor_name,
+                    is_interstate=is_interstate,
+                    created_by=current_user_id or purchase.created_by
                 )
-                db.add(transaction)
+        except Exception as e:
+            import traceback
+            print(f"Warning: Could not create journal entry for purchase {purchase.id}: {str(e)}\n{traceback.format_exc()}")
+
+    # CASE 2: Transition FROM RECEIVED TO CANCELLED (Reverse Stock)
+    elif old_status == "received" and new_status == "cancelled":
+        details = list(purchase.details)
+        for detail in details:
+            # Reverse global WAC (using is_cancellation=True)
+            update_item_cost_wac(
+                db, 
+                detail.item_id, 
+                float(detail.quantity or 0), 
+                float(detail.unit_price or 0),
+                is_cancellation=True,
+                commit=False
+            )
+            
+            # Reverse location stock
+            if purchase.destination_location_id:
+                loc_stock = db.query(LocationStock).filter(
+                    LocationStock.location_id == purchase.destination_location_id,
+                    LocationStock.item_id == detail.item_id
+                ).first()
+                if loc_stock:
+                    loc_stock.quantity -= float(detail.quantity or 0)
+                    # If quantity hits 0, maybe keep it? Usually better to keep historical locations
+            
+            # Create reversal transaction
+            u_price = float(detail.unit_price or 0)
+            transaction = InventoryTransaction(
+                item_id=detail.item_id,
+                transaction_type="out", # Out because we are removing stock
+                quantity=float(detail.quantity or 0),
+                unit_price=u_price,
+                total_amount=u_price * float(detail.quantity or 0),
+                reference_number=purchase.purchase_number,
+                purchase_master_id=purchase.id,
+                notes=f"Purchase cancelled/reversed: {purchase.purchase_number}",
+                created_by=current_user_id or purchase.created_by
+            )
+            db.add(transaction)
     
+    # Update status and save
+    purchase.status = status
     db.commit()
     db.refresh(purchase)
     return purchase
@@ -618,256 +700,268 @@ def generate_issue_number(db: Session):
 def create_stock_issue(db: Session, data: dict, issued_by: int):
     from app.models.inventory import StockIssue, StockIssueDetail, InventoryTransaction, InventoryItem, Location, LocationStock
     from datetime import datetime
+    from sqlalchemy.exc import IntegrityError
     
-    issue_number = generate_issue_number(db)
-    
-    # Parse issue_date if provided as string
-    issue_date = data.get("issue_date")
-    if issue_date and isinstance(issue_date, str):
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
-            issue_date = datetime.fromisoformat(issue_date.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            issue_date = datetime.utcnow()
-    elif not issue_date:
-        issue_date = datetime.utcnow()
-    
-    issue = StockIssue(
-        issue_number=issue_number,
-        requisition_id=data.get("requisition_id"),
-        issued_by=issued_by,
-        source_location_id=data.get("source_location_id"),
-        destination_location_id=data.get("destination_location_id"),
-        issue_date=issue_date,
-        notes=data.get("notes"),
-    )
-    db.add(issue)
-    db.flush()
-    
-    for detail_data in data["details"]:
-        item = get_item_by_id(db, detail_data["item_id"])
-        if not item:
-            continue
-        
-        # Check stock availability
-        issued_qty = detail_data.get("issued_quantity", detail_data.get("quantity", 0))
-        if issued_qty <= 0:
-            continue  # Skip zero or negative quantities
-        
-        # SMART SOURCE LOCATION DETECTION
-        # If no source specified, find which non-guest-room location actually has this item
-        source_loc_id = data.get("source_location_id")
-        if not source_loc_id:
-            from app.models.inventory import LocationStock
-            # Find locations that have this item (excluding guest rooms)
-            available_locations = db.query(LocationStock).join(Location).filter(
-                LocationStock.item_id == detail_data["item_id"],
-                LocationStock.quantity >= issued_qty,
-                Location.location_type != "GUEST_ROOM"
-            ).order_by(LocationStock.quantity.desc()).all()
+            issue_number = generate_issue_number(db)
             
-            if available_locations:
-                # Use the location with most stock
-                source_loc_id = available_locations[0].location_id
-                source_loc_name = available_locations[0].location.name if available_locations[0].location else f"Location {source_loc_id}"
-                print(f"[AUTO-DETECT] Item {item.name}: Using {source_loc_name} (ID: {source_loc_id}) as source (has {available_locations[0].quantity} units)")
-                # Update the issue record's source if this is the first item
-                if not issue.source_location_id:
-                    issue.source_location_id = source_loc_id
-            else:
-                # Fallback: try to find ANY warehouse/store
-                warehouse = db.query(Location).filter(
-                    Location.location_type.in_(["WAREHOUSE", "CENTRAL_WAREHOUSE", "BRANCH_STORE", "DEPARTMENT", "LAUNDRY"])
-                ).first()
-                if warehouse:
-                    source_loc_id = warehouse.id
-                    if not issue.source_location_id:
-                        issue.source_location_id = source_loc_id
-        
-        # Strict Stock Check
-        # Check against Source Location Stock if specified (preferred for allocations)
-        if source_loc_id:
-             from app.models.inventory import LocationStock
-             source_stock_record = db.query(LocationStock).filter(
-                 LocationStock.location_id == source_loc_id,
-                 LocationStock.item_id == detail_data["item_id"]
-             ).first()
-             
-             available_qty = source_stock_record.quantity if source_stock_record else 0.0
-             
-             if available_qty < issued_qty:
-                 print(f"[WARNING] Insufficient stock at source location for {item.name}. Available: {available_qty}, Requested: {issued_qty}. Proceeding with negative stock.")
-        else:
-             # Global stock check - warn but allow negative stock
-             if item.current_stock < issued_qty:
-                 print(f"[WARNING] Insufficient Global Stock for {item.name}. Available: {item.current_stock}, Requested: {issued_qty}. Proceeding with negative stock.")
-        
-        # Calculate cost/price
-        # Ensure float arithmetic
-        # USE SELLING PRICE PREFERENCE for Guest Room issues (or generally if defined)
-        price_to_use = item.unit_price # Default to cost
-        if item.selling_price and item.selling_price > 0:
-             price_to_use = item.selling_price
-        
-        u_price = float(price_to_use or 0)
-        i_qty = float(issued_qty or 0)
-        cost = u_price * i_qty
-        
-        # Use is_payable from request if provided (frontend sends this), otherwise default to False
-        is_payable = detail_data.get("is_payable", False)
-        print(f"[DEBUG] Item {item.name}: is_payable from request = {is_payable}, detail_data = {detail_data}")
-        
-        # Create issue detail
-        detail = StockIssueDetail(
-            issue_id=issue.id,
-            item_id=detail_data["item_id"],
-            issued_quantity=i_qty,
-            batch_lot_number=detail_data.get("batch_lot_number"),
-            unit=detail_data["unit"],
-            unit_price=u_price,
-            cost=cost,
-            notes=detail_data.get("notes"),
-            is_payable=is_payable,
-            rental_price=detail_data.get("rental_price"),
-        )
-        db.add(detail)
-        
-        # Get destination location for determining if this is a transfer or consumption
-        # CRITICAL FIX: Check destination_location_id directly, not just the fetched object
-        dest_location_id = data.get("destination_location_id")
-        dest_location = None
-        if dest_location_id:
-            dest_location = get_location_by_id(db, dest_location_id)
-        
-        # CRITICAL FIX: Only deduct global stock if this is actual consumption (no destination)
-        # If there's a destination, it's a transfer - stock still exists, just moved locations
-        if not dest_location_id:
-            # Actual consumption - deduct from global stock
-            print(f"[STOCK] Consumption: Deducting {issued_qty} of {item.name} from global stock")
-            item.current_stock -= issued_qty
-        else:
-            # Transfer between locations - global stock unchanged (just location stocks change)
-            print(f"[STOCK] Transfer: Moving {issued_qty} of {item.name} between locations (global stock unchanged)")
-        
-        dest_location_name = ""
-        if dest_location:
-            dest_location_name = f"{dest_location.building} - {dest_location.room_area}" if dest_location.building or dest_location.room_area else dest_location.name or f"Location {dest_location.id}"
-        
-        # Create transaction record with destination location info
-        transaction_notes = f"Stock Issue: {issue_number}"
-        if dest_location_name:
-            transaction_notes += f" → {dest_location_name}"
-        if data.get('notes'):
-            transaction_notes += f" - {data.get('notes', '')}"
-        
-        # Determine transaction type based on whether this is a transfer or consumption
-        # If there's a destination location, it's a transfer (stock still exists)
-        # If no destination, it's actual consumption (stock is used up)
-        out_transaction_type = "transfer_out" if dest_location else "out"
-        
-        # OUT transaction (from source/global inventory)
-        transaction_out = InventoryTransaction(
-            item_id=detail_data["item_id"],
-            transaction_type=out_transaction_type,
-            quantity=i_qty,
-            unit_price=u_price,
-            total_amount=cost,
-            reference_number=issue_number,
-            notes=transaction_notes,
-            created_by=issued_by
-        )
-        db.add(transaction_out)
-        
-        # IN transaction (to destination location) - shows as "Stock Received" at destination
-        if dest_location:
-            transaction_in = InventoryTransaction(
-                item_id=detail_data["item_id"],
-                transaction_type="transfer_in",
-                quantity=i_qty,
-                unit_price=u_price,
-                total_amount=cost,
-                reference_number=issue_number,
-                notes=f"Stock Received: {issue_number} from {data.get('source_location_id', 'Central')}",
-                created_by=issued_by,
-                department=dest_location_name  # Track which location received it
+            # Parse issue_date if provided as string
+            issue_date = data.get("issue_date")
+            if issue_date and isinstance(issue_date, str):
+                try:
+                    issue_date = datetime.fromisoformat(issue_date.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    issue_date = datetime.utcnow()
+            elif not issue_date:
+                issue_date = datetime.utcnow()
+            
+            issue = StockIssue(
+                issue_number=issue_number,
+                requisition_id=data.get("requisition_id"),
+                issued_by=issued_by,
+                source_location_id=data.get("source_location_id"),
+                destination_location_id=data.get("destination_location_id"),
+                issue_date=issue_date,
+                notes=data.get("notes"),
+                booking_id=data.get("booking_id"),
+                guest_id=data.get("guest_id")
             )
-            db.add(transaction_in)
-        
-        # Create Journal Entry for Consumption (COGS)
-        # ONLY if this is actual consumption (no destination location)
-        # If there's a destination, it's just a transfer - inventory still exists
-        # We also check data.get("destination_location_id") to be safe in case object lookup failed
-        if cost and cost > 0 and not dest_location and not data.get("destination_location_id"):
-            try:
-                from app.utils.accounting_helpers import create_consumption_journal_entry
-                create_consumption_journal_entry(
-                    db=db,
-                    consumption_id=issue.id,
-                    cogs_amount=float(cost),
-                    inventory_item_name=item.name,
+            db.add(issue)
+            db.flush()
+            
+            for detail_data in data["details"]:
+                item = get_item_by_id(db, detail_data["item_id"])
+                if not item:
+                    continue
+                
+                # Check stock availability
+                issued_qty = detail_data.get("issued_quantity", detail_data.get("quantity", 0))
+                if issued_qty <= 0:
+                    continue  # Skip zero or negative quantities
+                
+                # SMART SOURCE LOCATION DETECTION
+                # If no source specified, find which non-guest-room location actually has this item
+                source_loc_id = data.get("source_location_id")
+                if not source_loc_id:
+                    from app.models.inventory import LocationStock
+                    # Find locations that have this item (excluding guest rooms)
+                    available_locations = db.query(LocationStock).join(Location).filter(
+                        LocationStock.item_id == detail_data["item_id"],
+                        LocationStock.quantity >= issued_qty,
+                        Location.location_type != "GUEST_ROOM"
+                    ).order_by(LocationStock.quantity.desc()).all()
+                    
+                    if available_locations:
+                        # Use the location with most stock
+                        source_loc_id = available_locations[0].location_id
+                        source_loc_name = available_locations[0].location.name if available_locations[0].location else f"Location {source_loc_id}"
+                        print(f"[AUTO-DETECT] Item {item.name}: Using {source_loc_name} (ID: {source_loc_id}) as source (has {available_locations[0].quantity} units)")
+                        # Update the issue record's source if this is the first item
+                        if not issue.source_location_id:
+                            issue.source_location_id = source_loc_id
+                    else:
+                        # Fallback: try to find ANY warehouse/store
+                        warehouse = db.query(Location).filter(
+                            Location.location_type.in_(["WAREHOUSE", "CENTRAL_WAREHOUSE", "BRANCH_STORE", "DEPARTMENT", "LAUNDRY"])
+                        ).first()
+                        if warehouse:
+                            source_loc_id = warehouse.id
+                            if not issue.source_location_id:
+                                issue.source_location_id = source_loc_id
+                
+                # Strict Stock Check
+                # Check against Source Location Stock if specified (preferred for allocations)
+                if source_loc_id:
+                     from app.models.inventory import LocationStock
+                     source_stock_record = db.query(LocationStock).filter(
+                         LocationStock.location_id == source_loc_id,
+                         LocationStock.item_id == detail_data["item_id"]
+                     ).first()
+                     
+                     available_qty = source_stock_record.quantity if source_stock_record else 0.0
+                     
+                     if available_qty < issued_qty:
+                         print(f"[WARNING] Insufficient stock at source location for {item.name}. Available: {available_qty}, Requested: {issued_qty}. Proceeding with negative stock.")
+                else:
+                     # Global stock check - warn but allow negative stock
+                     if item.current_stock < issued_qty:
+                         print(f"[WARNING] Insufficient Global Stock for {item.name}. Available: {item.current_stock}, Requested: {issued_qty}. Proceeding with negative stock.")
+                
+                # Calculate cost/price
+                # Ensure float arithmetic
+                # USE SELLING PRICE PREFERENCE for Guest Room issues (or generally if defined)
+                price_to_use = item.unit_price # Default to cost
+                if item.selling_price and item.selling_price > 0:
+                     price_to_use = item.selling_price
+                
+                u_price = float(price_to_use or 0)
+                i_qty = float(issued_qty or 0)
+                cost = u_price * i_qty
+                
+                # Use is_payable from request if provided (frontend sends this), otherwise default to False
+                is_payable = detail_data.get("is_payable", False)
+                print(f"[DEBUG] Item {item.name}: is_payable from request = {is_payable}, detail_data = {detail_data}")
+                
+                # Create issue detail
+                detail = StockIssueDetail(
+                    issue_id=issue.id,
+                    item_id=detail_data["item_id"],
+                    issued_quantity=i_qty,
+                    batch_lot_number=detail_data.get("batch_lot_number"),
+                    unit=detail_data["unit"],
+                    unit_price=u_price,
+                    cost=cost,
+                    notes=detail_data.get("notes"),
+                    is_payable=is_payable,
+                    rental_price=detail_data.get("rental_price"),
+                )
+                db.add(detail)
+                
+                # Get destination location for determining if this is a transfer or consumption
+                # CRITICAL FIX: Check destination_location_id directly, not just the fetched object
+                dest_location_id = data.get("destination_location_id")
+                dest_location = None
+                if dest_location_id:
+                    dest_location = get_location_by_id(db, dest_location_id)
+                
+                # CRITICAL FIX: Only deduct global stock if this is actual consumption (no destination)
+                # If there's a destination, it's a transfer - stock still exists, just moved locations
+                if not dest_location_id:
+                    # Actual consumption - deduct from global stock
+                    print(f"[STOCK] Consumption: Deducting {issued_qty} of {item.name} from global stock")
+                    item.current_stock -= issued_qty
+                else:
+                    # Transfer between locations - global stock unchanged (just location stocks change)
+                    print(f"[STOCK] Transfer: Moving {issued_qty} of {item.name} between locations (global stock unchanged)")
+                
+                dest_location_name = ""
+                if dest_location:
+                    dest_location_name = f"{dest_location.building} - {dest_location.room_area}" if dest_location.building or dest_location.room_area else dest_location.name or f"Location {dest_location.id}"
+                
+                # Create transaction record with destination location info
+                transaction_notes = f"Stock Issue: {issue_number}"
+                if dest_location_name:
+                    transaction_notes += f" → {dest_location_name}"
+                if data.get('notes'):
+                    transaction_notes += f" - {data.get('notes', '')}"
+                
+                # Determine transaction type based on whether this is a transfer or consumption
+                # If there's a destination location, it's a transfer (stock still exists)
+                # If no destination, it's actual consumption (stock is used up)
+                out_transaction_type = "transfer_out" if dest_location else "out"
+                
+                # OUT transaction (from source/global inventory)
+                transaction_out = InventoryTransaction(
+                    item_id=detail_data["item_id"],
+                    transaction_type=out_transaction_type,
+                    quantity=i_qty,
+                    unit_price=u_price,
+                    total_amount=cost,
+                    reference_number=issue_number,
+                    notes=transaction_notes,
                     created_by=issued_by
                 )
-            except Exception as e:
-                print(f"[WARNING] Could not create consumption journal entry: {e}")
-        
-        # Update requisition status if linked
-        if data.get("requisition_id"):
-            update_requisition_status(db, data["requisition_id"], "issued")
+                db.add(transaction_out)
+                
+                # IN transaction (to destination location) - shows as "Stock Received" at destination
+                if dest_location:
+                    transaction_in = InventoryTransaction(
+                        item_id=detail_data["item_id"],
+                        transaction_type="transfer_in",
+                        quantity=i_qty,
+                        unit_price=u_price,
+                        total_amount=cost,
+                        reference_number=issue_number,
+                        notes=f"Stock Received: {issue_number} from {data.get('source_location_id', 'Central')}",
+                        created_by=issued_by,
+                        department=dest_location_name  # Track which location received it
+                    )
+                    db.add(transaction_in)
+                
+                # Create Journal Entry for Consumption (COGS)
+                # ONLY if this is actual consumption (no destination location)
+                # If there's a destination, it's just a transfer - inventory still exists
+                # We also check data.get("destination_location_id") to be safe in case object lookup failed
+                if cost and cost > 0 and not dest_location and not data.get("destination_location_id"):
+                    try:
+                        from app.utils.accounting_helpers import create_consumption_journal_entry
+                        create_consumption_journal_entry(
+                            db=db,
+                            consumption_id=issue.id,
+                            cogs_amount=float(cost),
+                            inventory_item_name=item.name,
+                            created_by=issued_by
+                        )
+                    except Exception as e:
+                        print(f"[WARNING] Could not create consumption journal entry: {e}")
+                
+                # Update requisition status if linked
+                if data.get("requisition_id"):
+                    update_requisition_status(db, data["requisition_id"], "issued")
 
-        # Update Destination Location Stock
-        # This ensures the item appears in the room's inventory list
-        dest_loc_id = data.get("destination_location_id")
-        if dest_loc_id:
-             from app.models.inventory import LocationStock
-             
-             loc_stock = db.query(LocationStock).filter(
-                 LocationStock.location_id == dest_loc_id,
-                 LocationStock.item_id == detail_data["item_id"]
-             ).first()
-             
-             if loc_stock:
-                 loc_stock.quantity += i_qty
-                 loc_stock.last_updated = datetime.utcnow()
-             else:
-                 new_stock = LocationStock(
-                     location_id=dest_loc_id,
-                     item_id=detail_data["item_id"],
-                     quantity=i_qty,
-                     last_updated=datetime.utcnow()
-                 )
-                 db.add(new_stock)
+                # Update Destination Location Stock
+                # This ensures the item appears in the room's inventory list
+                dest_loc_id = data.get("destination_location_id")
+                if dest_loc_id:
+                     from app.models.inventory import LocationStock
+                     
+                     loc_stock = db.query(LocationStock).filter(
+                         LocationStock.location_id == dest_loc_id,
+                         LocationStock.item_id == detail_data["item_id"]
+                     ).first()
+                     
+                     if loc_stock:
+                         loc_stock.quantity += i_qty
+                         loc_stock.last_updated = datetime.utcnow()
+                     else:
+                         new_stock = LocationStock(
+                             location_id=dest_loc_id,
+                             item_id=detail_data["item_id"],
+                             quantity=i_qty,
+                             last_updated=datetime.utcnow()
+                         )
+                         db.add(new_stock)
 
-        # Update Source Location Stock (Deduct)
-        if source_loc_id:
-             from app.models.inventory import LocationStock
-             
-             source_stock = db.query(LocationStock).filter(
-                 LocationStock.location_id == source_loc_id,
-                 LocationStock.item_id == detail_data["item_id"]
-             ).first()
-             
-             if source_stock:
-                 source_stock.quantity -= i_qty
-                 # If negative, we allowed it via fallback, so just track it.
-             else:
-                 # If source stock record didn't exist but we allowed it (Fallback logic),
-                 # we should Create it with negative value (or 0) to track the gap?
-                 # Or if Global had it, maybe we just assume it was there.
-                 # Let's create it with quantity = -issued_qty (or 0 if we assume it was unrecorded positive)
-                 # Actually, if we assume it was there but unrecorded, setting to 0 is safer than negative.
-                 # BUT, for accounting, let's set it to 0 (assuming we just consumed the unrecorded stock).
-                 # Wait, if we want to be strict, we'd say -i_qty.
-                 # Let's init at 0 and subtract.
-                 new_source_stock = LocationStock(
-                     location_id=source_loc_id,
-                     item_id=detail_data["item_id"],
-                     quantity= -i_qty if i_qty > 0 else 0, # Initialize negative if we believe we owe it
-                     last_updated=datetime.utcnow()
-                 )
-                 db.add(new_source_stock)
-    
-    db.commit()
-    db.refresh(issue)
-    return issue
+                # Update Source Location Stock (Deduct)
+                if source_loc_id:
+                     from app.models.inventory import LocationStock
+                     
+                     source_stock = db.query(LocationStock).filter(
+                         LocationStock.location_id == source_loc_id,
+                         LocationStock.item_id == detail_data["item_id"]
+                     ).first()
+                     
+                     if source_stock:
+                         source_stock.quantity -= i_qty
+                         # If negative, we allowed it via fallback, so just track it.
+                     else:
+                         # Use 0 and subtract
+                         new_source_stock = LocationStock(
+                             location_id=source_loc_id,
+                             item_id=detail_data["item_id"],
+                             quantity= -i_qty if i_qty > 0 else 0, # Initialize negative if we believe we owe it
+                             last_updated=datetime.utcnow()
+                         )
+                         db.add(new_source_stock)
+            
+            db.commit()
+            db.refresh(issue)
+            return issue
+            
+        except IntegrityError as e:
+            db.rollback()
+            # Check for specific unique constraint on issue_number
+            err_str = str(e).lower()
+            if ("unique constraint" in err_str or "duplicate key" in err_str) and "issue_number" in err_str:
+                if attempt < max_retries - 1:
+                    print(f"[RETRY] Duplicate issue_number encountered. Retrying {attempt+1}/{max_retries}...")
+                    continue
+            raise e
+        except Exception as e:
+            db.rollback()
+            raise e
 
 
 def get_all_issues(db: Session, skip: int = 0, limit: int = 100):
@@ -969,7 +1063,8 @@ def create_waste_log(db: Session, data: dict, reported_by: int):
             raise ValueError("Item not found")
         
         if item.current_stock < data["quantity"]:
-            raise ValueError(f"Insufficient stock for {item.name}. Available: {item.current_stock}, Reported: {data['quantity']}")
+            print(f"[WARNING] Reporting waste for {item.name} with insufficient global stock. Available: {item.current_stock}, Requested: {data['quantity']}")
+            # We allow it to proceed for assets/issued items
         
         log_number = generate_waste_log_number(db)
         waste_log = WasteLog(
@@ -1004,59 +1099,40 @@ def create_waste_log(db: Session, data: dict, reported_by: int):
             if loc_stock:
                 loc_stock.quantity -= data["quantity"]
                 loc_stock.last_updated = datetime.utcnow()
-            else:
-                # Create negative stock record if it doesn't exist
-                new_stock = LocationStock(
-                    location_id=data["location_id"],
-                    item_id=item_id,
-                    quantity=-data["quantity"],
-                    last_updated=datetime.utcnow()
-                )
-                db.add(new_stock)
             
-            # 2. Try Deducting from Asset Mappings (e.g. "light" in Room 101)
-            # This is likely where the user's issue lies if it's an asset
+            # 2. Handle Asset Mappings (e.g. "light" in Room 101)
+            # PERSISTENCE FIX: We don't deactivate the mapping, we just record the waste.
+            # This ensures the item stays visible in the room list until checkout.
             mappings = db.query(AssetMapping).filter(
                 AssetMapping.location_id == data["location_id"],
                 AssetMapping.item_id == item_id,
                 AssetMapping.is_active == True
             ).all()
             
-            qty_to_remove = data["quantity"]
-            for mapping in mappings:
-                if qty_to_remove <= 0:
-                    break
-                available = mapping.quantity or 1
-                if available > qty_to_remove:
-                    mapping.quantity = available - qty_to_remove
-                    qty_to_remove = 0
-                else:
-                    # Remove entire mapping or mark inactive
-                    mapping.is_active = False # Soft delete or remove
-                    # db.delete(mapping) # Or hard delete
-                    qty_to_remove -= available
+            # We just update notes on mappings if needed, but don't deactivate
+            for m in mappings:
+                m.notes = (m.notes or "") + f" [Reported Damaged: {log_number}]"
 
-            # 3. Try Removing from Asset Registry (Specific tagged assets)
-            if qty_to_remove > 0:
-                # If we still have quantity to remove, maybe they are tracked individual items?
-                registry_items = db.query(AssetRegistry).filter(
-                    AssetRegistry.current_location_id == data["location_id"],
-                    AssetRegistry.item_id == item_id,
-                    AssetRegistry.status == "active"
-                ).limit(int(qty_to_remove)).all()
-                
-                for asset in registry_items:
-                    asset.status = "written_off" # Or damaged/disposed
-                    asset.notes = (asset.notes or "") + f" [Waste Log: {log_number}]"
+            # 3. Update Asset Registry (Specific tagged assets)
+            qty_to_mark = data["quantity"]
+            registry_items = db.query(AssetRegistry).filter(
+                AssetRegistry.current_location_id == data["location_id"],
+                AssetRegistry.item_id == item_id,
+                AssetRegistry.status == "active"
+            ).limit(int(qty_to_mark)).all()
+            
+            for asset in registry_items:
+                asset.status = "damaged" # Change from written_off to damaged
+                asset.notes = (asset.notes or "") + f" [Waste Log: {log_number}]"
         
         transaction = InventoryTransaction(
             item_id=item_id,
-            transaction_type="out",
+            transaction_type="waste", # Explicitly use 'waste'
             quantity=data["quantity"],
             unit_price=item.unit_price,
-            total_amount=item.unit_price * data["quantity"] if item.unit_price else None,
+            total_amount=float(item.unit_price or 0) * data["quantity"],
             reference_number=log_number,
-            notes=f"Waste/Spoilage: {data['reason_code']} - {data.get('notes', '')}",
+            notes=f"WASTE: {data['reason_code']} - {data.get('notes', '')}", # Add prefix for visibility
             created_by=reported_by
         )
         if transaction.total_amount and transaction.total_amount > 0:

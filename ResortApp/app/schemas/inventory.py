@@ -481,6 +481,8 @@ class StockIssueBase(BaseModel):
     destination_location_id: Optional[int] = None  # Where it went
     issue_date: Optional[datetime] = None
     notes: Optional[str] = None
+    booking_id: Optional[int] = None
+    guest_id: Optional[int] = None
 
 
 class StockIssueCreate(StockIssueBase):

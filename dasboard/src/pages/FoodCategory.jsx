@@ -3,15 +3,10 @@ import DashboardLayout from "../layout/DashboardLayout";
 import API from "../services/api";
 import { toast } from "react-hot-toast";
 import { motion } from "framer-motion";
-import { getMediaBaseUrl } from "../utils/env";
 
-// Helper function to get correct image URL based on environment
-const getImageUrl = (imagePath) => {
-  if (!imagePath) return 'https://placehold.co/400x300/e2e8f0/a0aec0?text=No+Image';
-  if (imagePath.startsWith('http')) return imagePath;
-  const baseUrl = getMediaBaseUrl();
-  return imagePath.startsWith('/') ? `${baseUrl}${imagePath}` : `${baseUrl}/${imagePath}`;
-};
+import { getImageUrl } from "../utils/imageUtils";
+
+// Utility moved to utils/imageUtils.js
 
 // KPI Card for quick stats
 const KpiCard = ({ title, value, icon, color }) => (
@@ -302,7 +297,7 @@ const FoodManagement = () => {
       <div className="p-6 space-y-12">
         <h1 className="text-3xl font-bold text-gray-800">Food & Beverage Management</h1>
         {error && <div className="p-4 mb-4 text-center text-red-700 bg-red-100 border border-red-200 rounded-lg">{error}</div>}
-        
+
         {/* KPI Section */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           <KpiCard title="Total Food Items" value={totalItems} color="bg-gradient-to-r from-green-500 to-green-700" icon={<i className="fas fa-utensils"></i>} />

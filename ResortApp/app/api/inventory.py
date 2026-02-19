@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError # Added import
 from typing import List, Optional
@@ -137,6 +137,11 @@ async def create_item(
                 shutil.copyfileobj(image.file, buffer)
             image_path = f"uploads/inventory_items/{filename}".replace("\\", "/")
         
+        
+        # Check if category enforces fixed asset status
+        if category.is_asset_fixed:
+            is_asset_fixed = True
+
         # Create item
         from app.models.inventory import InventoryItem, InventoryTransaction, Location, LocationStock
         
@@ -257,12 +262,20 @@ def get_items(
     limit: int = 100,
     category_id: Optional[int] = None,
     active_only: bool = True,
+    is_fixed_asset: Optional[bool] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Optimized endpoint with eager loading - no N+1 queries"""
     try:
-        items = inventory_crud.get_all_items(db, skip=skip, limit=limit, category_id=category_id, active_only=active_only)
+        items = inventory_crud.get_all_items(
+            db, 
+            skip=skip, 
+            limit=limit, 
+            category_id=category_id, 
+            active_only=active_only,
+            is_fixed_asset=is_fixed_asset
+        )
         
         # Fetch last purchase prices efficiently
         item_ids = [i.id for i in items]
@@ -591,6 +604,21 @@ async def update_item(
             is_active=is_active
         )
         
+        # Check if category enforces fixed asset status
+        # Get specified category or current item category
+        check_cat_id = category_id if category_id is not None else None
+        
+        # If no new category specified, need to fetch current item's category to check
+        if check_cat_id is None:
+             current_item = inventory_crud.get_item_by_id(db, item_id)
+             if current_item:
+                 check_cat_id = current_item.category_id
+
+        if check_cat_id:
+            cat_obj = inventory_crud.get_category_by_id(db, check_cat_id)
+            if cat_obj and cat_obj.is_asset_fixed:
+                update_data.is_asset_fixed = True
+
         updated = inventory_crud.update_item(db, item_id, update_data)
         if not updated:
             raise HTTPException(status_code=404, detail="Item not found")
@@ -701,15 +729,6 @@ def create_purchase(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Debug logging to file
-    import datetime
-    with open("purchase_debug.log", "a") as f:
-        f.write(f"\n=== {datetime.datetime.now()} ===\n")
-        f.write(f"[DEBUG CREATE_PURCHASE] Received purchase data:\n")
-        f.write(f"  Status: {purchase.status}\n")
-        f.write(f"  Destination Location ID: {purchase.destination_location_id}\n")
-        f.write(f"  Details count: {len(purchase.details)}\n")
-    
     print(f"[DEBUG CREATE_PURCHASE] Received purchase data:")
     print(f"  Status: {purchase.status}")
     print(f"  Destination Location ID: {purchase.destination_location_id}")
@@ -717,9 +736,12 @@ def create_purchase(
     
     created = inventory_crud.create_purchase_master(db, purchase, created_by=current_user.id)
     
-    # Use centralized status update logic to handle inventory and prices
+    # Use centralized status update logic to handle inventory, prices, and journal entries
     # This avoids redundant logic and ensures atomicity
-    if purchase.status.lower() == "received":
+    target_status = purchase.status.lower()
+    
+    # Logic for auto-assigning location if receiving
+    if target_status == "received":
         # Validate and ensure destination location is set
         if not created.destination_location_id:
             from app.models.inventory import Location
@@ -739,57 +761,17 @@ def create_purchase(
             db.commit()
             print(f"[AUTO-ASSIGN] No destination location specified. Using default warehouse: {default_location.name}")
         
-        # Trigger the centralized status update logic (this handles WAC, stock, and transactions)
+        # Trigger the centralized status update logic
         # We temporarily set status to draft in DB if it was created as received to trigger the transition
+        # in the centralized update_purchase_status logic
         if created.status.lower() == "received":
             created.status = "draft"
             db.commit()
             
-        created = inventory_crud.update_purchase_status(db, created.id, "received")
-    elif purchase.status.lower() != "draft":
-        # For other statuses like 'confirmed', just update it
-        created = inventory_crud.update_purchase_status(db, created.id, purchase.status)
-    
-    # Automatically create journal entry for purchase (Scenario 1)
-    # Only create if purchase is confirmed/received (not draft)
-    if purchase.status.lower() in ["confirmed", "received"]:
-        try:
-            from app.utils.accounting_helpers import create_purchase_journal_entry
-            from app.models.inventory import Vendor
-            from app.api.gst_reports import RESORT_STATE_CODE
-            
-            vendor = inventory_crud.get_vendor_by_id(db, created.vendor_id)
-            vendor_name = (vendor.legal_name or vendor.name) if vendor else "Unknown"
-            
-            # Determine if inter-state purchase
-            is_interstate = False
-            if vendor and vendor.gst_number and len(vendor.gst_number) >= 2:
-                vendor_state_code = vendor.gst_number[:2]
-                is_interstate = vendor_state_code != RESORT_STATE_CODE
-            
-            # Calculate inventory amount (sub_total) and tax amounts
-            inventory_amount = float(created.sub_total or 0)
-            cgst_amount = float(created.cgst or 0)
-            sgst_amount = float(created.sgst or 0)
-            igst_amount = float(created.igst or 0)
-            
-            # Create journal entry
-            create_purchase_journal_entry(
-                db=db,
-                purchase_id=created.id,
-                vendor_id=created.vendor_id,
-                inventory_amount=inventory_amount,
-                cgst_amount=cgst_amount,
-                sgst_amount=sgst_amount,
-                igst_amount=igst_amount,
-                vendor_name=vendor_name,
-                is_interstate=is_interstate,
-                created_by=current_user.id
-            )
-        except Exception as e:
-            # Log error but don't fail purchase creation
-            import traceback
-            print(f"Warning: Could not create journal entry for purchase {created.id}: {str(e)}\\n{traceback.format_exc()}")
+        created = inventory_crud.update_purchase_status(db, created.id, "received", current_user_id=current_user.id)
+    elif target_status in ["confirmed", "cancelled"]:
+        # For other significant statuses, use the centralized logic (handles journal entries for confirmed)
+        created = inventory_crud.update_purchase_status(db, created.id, target_status, current_user_id=current_user.id)
     
     # Optimized: Batch load items to avoid N+1 queries
     from sqlalchemy.orm import joinedload
@@ -927,159 +909,21 @@ def update_purchase(
     if not updated:
         raise HTTPException(status_code=400, detail="Cannot update purchase")
     
-    # CASE 1: Purchase RECEIVED
-    # Safely handle None values before calling .lower()
-    new_status_lower = new_status.lower() if new_status else ""
-    old_status_lower = old_status.lower() if old_status else ""
-    
-    if new_status_lower == "received" and old_status_lower != "received":
-        # Validate and ensure destination location is set
-        if not updated.destination_location_id:
+    # CASE 1: Transition Logic (handled centrally in CRUD)
+    # If the status was changed in the update, trigger the centralized status logic
+    if purchase_update.status is not None and purchase_update.status.lower() != old_status.lower():
+        # Handle auto-assign location for receiving if needed
+        if purchase_update.status.lower() == "received" and not updated.destination_location_id:
             from app.models.inventory import Location
-            # Try to find a default warehouse location
             default_location = db.query(Location).filter(
                 Location.location_type.in_(["WAREHOUSE", "CENTRAL_WAREHOUSE", "BRANCH_STORE"])
             ).first()
-            
-            if not default_location:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Cannot receive purchase without a destination location. Please create a warehouse location first or specify one in the purchase."
-                )
-            
-            # Auto-assign the default location
-            updated.destination_location_id = default_location.id
-            db.commit()
-            print(f"[AUTO-ASSIGN] No destination location specified. Using default warehouse: {default_location.name}")
+            if default_location:
+                updated.destination_location_id = default_location.id
+                db.commit()
         
-        for detail in updated.details:
-            if not detail.item_id:
-                continue
-            
-            # Use central WAC helper from CRUD
-            inventory_crud.update_item_cost_wac(
-                db, 
-                detail.item_id, 
-                float(detail.quantity or 0), 
-                float(detail.unit_price or 0)
-            )
-            
-            # Location stock
-            if updated.destination_location_id:
-                location_stock = db.query(LocationStock).filter(
-                    LocationStock.location_id == updated.destination_location_id,
-                    LocationStock.item_id == detail.item_id
-                ).first()
-                
-                if location_stock:
-                    location_stock.quantity += float(detail.quantity or 0)
-                else:
-                    location_stock = LocationStock(
-                        location_id=updated.destination_location_id,
-                        item_id=detail.item_id,
-                        quantity=detail.quantity
-                    )
-                    db.add(location_stock)
-            
-            # Transaction
-            u_price = float(detail.unit_price or 0)
-            qty = float(detail.quantity or 0)
-            
-            transaction = InventoryTransaction(
-                item_id=detail.item_id,
-                transaction_type="in",
-                quantity=qty,
-                unit_price=u_price,
-                total_amount=u_price * qty,
-                reference_number=updated.purchase_number,
-                notes=f"Purchase received: {updated.purchase_number}",
-                created_by=current_user.id
-            )
-            db.add(transaction)
-    
-    # CASE 2: Purchase CANCELLED
-    elif new_status.lower() == "cancelled" and old_status.lower() == "received":
-        for detail in updated.details:
-            if not detail.item_id:
-                continue
-            
-            # Use central WAC helper from CRUD with is_cancellation=True
-            inventory_crud.update_item_cost_wac(
-                db, 
-                detail.item_id, 
-                float(detail.quantity or 0), 
-                float(detail.unit_price or 0),
-                is_cancellation=True
-            )
-            
-            if updated.destination_location_id:
-                location_stock = db.query(LocationStock).filter(
-                    LocationStock.location_id == updated.destination_location_id,
-                    LocationStock.item_id == detail.item_id
-                ).first()
-                
-                if location_stock:
-                    location_stock.quantity -= float(detail.quantity or 0)
-                    if location_stock.quantity <= 0:
-                        db.delete(location_stock)
-            
-            transaction = InventoryTransaction(
-                item_id=detail.item_id,
-                transaction_type="out",
-                quantity=float(detail.quantity or 0),
-                unit_price=float(detail.unit_price or 0),
-                total_amount=float(detail.unit_price or 0) * float(detail.quantity or 0),
-                reference_number=updated.purchase_number,
-                notes=f"Purchase cancelled: {updated.purchase_number}",
-                created_by=current_user.id
-            )
-
-            db.add(transaction)
-            
-        # Automatically create journal entry (if not exists)
-        try:
-            from app.models.account import JournalEntry
-            from app.utils.accounting_helpers import create_purchase_journal_entry
-            from app.api.gst_reports import RESORT_STATE_CODE
-            
-            # Check if entry already exists
-            existing_entry = db.query(JournalEntry).filter(
-                JournalEntry.reference_type == "purchase",
-                JournalEntry.reference_id == purchase_id
-            ).first()
-            
-            if not existing_entry:
-                vendor = inventory_crud.get_vendor_by_id(db, updated.vendor_id)
-                vendor_name = (vendor.legal_name or vendor.name) if vendor else "Unknown"
-                
-                # Determine if inter-state purchase
-                is_interstate = False
-                if vendor and vendor.gst_number and len(vendor.gst_number) >= 2:
-                    vendor_state_code = vendor.gst_number[:2]
-                    is_interstate = vendor_state_code != RESORT_STATE_CODE
-                
-                # Calculate inventory amount (sub_total) and tax amounts
-                inventory_amount = float(updated.sub_total or 0)
-                cgst_amount = float(updated.cgst or 0)
-                sgst_amount = float(updated.sgst or 0)
-                igst_amount = float(updated.igst or 0)
-                
-                # Create journal entry
-                create_purchase_journal_entry(
-                    db=db,
-                    purchase_id=updated.id,
-                    vendor_id=updated.vendor_id,
-                    inventory_amount=inventory_amount,
-                    cgst_amount=cgst_amount,
-                    sgst_amount=sgst_amount,
-                    igst_amount=igst_amount,
-                    vendor_name=vendor_name,
-                    is_interstate=is_interstate,
-                    created_by=current_user.id
-                )
-                print(f"[INFO] Created missing journal entry for purchase #{updated.id}")
-        except Exception as e:
-            print(f"[WARNING] Could not create journal entry on update: {str(e)}")
+        # Call centralized logic
+        updated = inventory_crud.update_purchase_status(db, updated.id, purchase_update.status, current_user_id=current_user.id)
     
     db.commit()
     return get_purchase(purchase_id, db, current_user)
@@ -1196,7 +1040,7 @@ def update_purchase_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    purchase = inventory_crud.update_purchase_status(db, purchase_id, status)
+    purchase = inventory_crud.update_purchase_status(db, purchase_id, status, current_user_id=current_user.id)
     if not purchase:
         raise HTTPException(status_code=404, detail="Purchase not found")
         
@@ -1271,7 +1115,7 @@ def get_transactions(
     """Optimized with eager loading - no N+1 queries"""
     from app.models.inventory import InventoryTransaction, StockIssue, InventoryItem, InventoryCategory
     from sqlalchemy.orm import joinedload
-    from sqlalchemy import or_
+    from sqlalchemy import or_, and_
 
     query = db.query(InventoryTransaction).join(InventoryItem).options(
         joinedload(InventoryTransaction.item),
@@ -1301,11 +1145,9 @@ def get_transactions(
                      InventoryTransaction.notes.ilike("%opening balance%")
                  )
              )
-        elif type == "usage": # Kitchen usage
-             query = query.filter(InventoryTransaction.transaction_type == "out")
-             # Optionally verify it's not waste? Frontend does this check.
-             # "usage" usually means NOT waste.
+        elif type == "usage": # Consumption
              query = query.filter(
+                 InventoryTransaction.transaction_type == "out",
                  ~or_(
                      InventoryTransaction.notes.ilike("%waste%"),
                      InventoryTransaction.notes.ilike("%spoilage%")
@@ -1313,10 +1155,15 @@ def get_transactions(
              )
         elif type == "waste":
              query = query.filter(
-                 InventoryTransaction.transaction_type == "out",
                  or_(
-                     InventoryTransaction.notes.ilike("%waste%"),
-                     InventoryTransaction.notes.ilike("%spoilage%")
+                     InventoryTransaction.transaction_type == "waste",
+                     and_(
+                         InventoryTransaction.transaction_type.in_(["out", "adjustment"]),
+                         or_(
+                             InventoryTransaction.notes.ilike("%waste%"),
+                             InventoryTransaction.notes.ilike("%spoilage%")
+                         )
+                     )
                  )
              )
         else:
@@ -1359,23 +1206,56 @@ def get_transactions(
     
     result = []
     for trans in transactions:
-        # Get destination location if this is a stock issue
-        destination_location_name = None
-        if trans.reference_number and trans.reference_number.startswith("ISS-"):
-            # Try to find the stock issue and get destination location
-            issue = db.query(StockIssue).filter(StockIssue.issue_number == trans.reference_number).first()
-            if issue and issue.destination_location_id:
-                dest_loc = inventory_crud.get_location_by_id(db, issue.destination_location_id)
-                if dest_loc:
-                    destination_location_name = f"{dest_loc.building} - {dest_loc.room_area}" if (dest_loc.building or dest_loc.room_area) else dest_loc.name or f"Location {dest_loc.id}"
-        
         # Relationships already loaded, no extra queries
-        result.append({
+        trans_dict = {
             **trans.__dict__,
             "item_name": trans.item.name if trans.item else None,
             "created_by_name": trans.user.name if trans.user else None,
-            "destination_location_name": destination_location_name
-        })
+            "source_location_name": None,
+            "destination_location_name": None
+        }
+
+        # 1. Handle Stock Issues (Transfers)
+        if trans.reference_number and trans.reference_number.startswith("ISS-"):
+            issue = db.query(StockIssue).filter(StockIssue.issue_number == trans.reference_number).first()
+            if issue:
+                if issue.source_location_id:
+                    src_loc = inventory_crud.get_location_by_id(db, issue.source_location_id)
+                    if src_loc:
+                        trans_dict["source_location_name"] = f"{src_loc.building} - {src_loc.room_area}" if (src_loc.building or src_loc.room_area) else src_loc.name
+                
+                if issue.destination_location_id:
+                    dest_loc = inventory_crud.get_location_by_id(db, issue.destination_location_id)
+                    if dest_loc:
+                        trans_dict["destination_location_name"] = f"{dest_loc.building} - {dest_loc.room_area}" if (dest_loc.building or dest_loc.room_area) else dest_loc.name
+
+        # 2. Handle Waste Logs
+        elif trans.reference_number and trans.reference_number.startswith("WASTE-"):
+            # Import WasteLog locally to avoid circular imports
+            from app.models.inventory import WasteLog
+            waste = db.query(WasteLog).filter(WasteLog.log_number == trans.reference_number).first()
+            if waste and waste.location_id:
+                w_loc = inventory_crud.get_location_by_id(db, waste.location_id)
+                if w_loc:
+                    trans_dict["source_location_name"] = f"{w_loc.building} - {w_loc.room_area}" if (w_loc.building or w_loc.room_area) else w_loc.name
+
+        # 3. Handle Returns and Consumption from Checkout
+        elif trans.reference_number and (trans.reference_number.startswith("RET-") or "RM" in trans.reference_number):
+            # Try to extract room number from reference like RET-RM001 or RET-LAUNDRY001
+            import re
+            room_match = re.search(r'RM(\d+)', trans.reference_number) or re.search(r'RM\s*([A-Za-z0-0-]+)', trans.notes or "")
+            if room_match:
+                room_num = room_match.group(1)
+                trans_dict["source_location_name"] = f"Room {room_num}"
+            
+            # For returns, destination is usually a warehouse or laundry
+            if trans.transaction_type == "transfer_in" and trans.notes:
+                if "Laundry" in trans.notes:
+                    trans_dict["destination_location_name"] = "Laundry"
+                elif "Stock" in trans.notes or "Warehouse" in trans.notes:
+                    trans_dict["destination_location_name"] = "Central Warehouse"
+
+        result.append(trans_dict)
     return result
 
 
@@ -1910,14 +1790,72 @@ def get_locations(
 @router.get("/locations/{location_id}/items")
 def get_location_items(
     location_id: int,
+    booking_id: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get all inventory items and their stock levels for a specific location"""
     from app.models.inventory import InventoryItem, AssetMapping, AssetRegistry, StockIssueDetail, StockIssue, LocationStock, WasteLog
+    from app.models.booking import Booking
+    from app.models.Package import PackageBooking
     from sqlalchemy import func
     from sqlalchemy.orm import joinedload
     from datetime import datetime, timedelta
+    
+    # --- Date Filtering Logic ---
+    filter_start = None
+    filter_end = None
+    
+    # 1. Try to get dates from booking_id
+    if booking_id:
+        try:
+            # Handle display ID BK-000001 or PK-000001
+            working_id = booking_id
+            is_package = False
+            if "-" in str(booking_id):
+                parts = str(booking_id).split("-")
+                working_id = int(parts[1])
+                is_package = parts[0].upper() == "PK"
+            else:
+                working_id = int(booking_id)
+            
+            if is_package:
+                b = db.query(PackageBooking).filter(PackageBooking.id == working_id).first()
+            else:
+                b = db.query(Booking).filter(Booking.id == working_id).first()
+            
+            if b:
+                filter_start = b.checked_in_at or b.check_in
+                filter_end = b.check_out
+                if isinstance(filter_start, str):
+                    filter_start = datetime.strptime(filter_start, '%Y-%m-%d')
+                if isinstance(filter_end, str):
+                    filter_end = datetime.strptime(filter_end, '%Y-%m-%d')
+        except Exception as e:
+            print(f"Error parsing booking_id for filters: {e}")
+
+    # 2. Override with explicit dates if provided
+    if start_date:
+        try:
+            filter_start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        except:
+            try: filter_start = datetime.strptime(start_date, '%Y-%m-%d')
+            except: pass
+    
+    if end_date:
+        try:
+            filter_end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        except:
+            try: filter_end = datetime.strptime(end_date, '%Y-%m-%d')
+            except: pass
+
+    # If end_date is just a date, set it to end of day
+    if filter_end and (not hasattr(filter_end, 'hour') or filter_end.hour == 0):
+        # Using a simple check if it has datetime properties or just date
+        if isinstance(filter_end, datetime):
+            filter_end = filter_end.replace(hour=23, minute=59, second=59)
     
     location = inventory_crud.get_location_by_id(db, location_id)
     if not location:
@@ -1926,8 +1864,7 @@ def get_location_items(
     # 1. Get items from LocationStock (Primary Source for bulk items)
     # 1. Get items from LocationStock (Primary Source for bulk items)
     location_stocks = db.query(LocationStock).filter(
-        LocationStock.location_id == location_id,
-        LocationStock.quantity != 0
+        LocationStock.location_id == location_id
     ).all()
     
     # 2. Get items assigned to this location via asset mappings
@@ -1958,47 +1895,109 @@ def get_location_items(
             category = inventory_crud.get_category_by_id(db, item.category_id)
             
             # Fetch all issue details ordered by date DESC
-            issue_details = db.query(StockIssueDetail).join(StockIssue).filter(
+            # REFINED: Prioritize booking_id filtering to avoid showing items from other guests
+            # that might overlap on the same day due to loose date filtering.
+            issue_query = db.query(StockIssueDetail).join(StockIssue).filter(
                 StockIssue.destination_location_id == location_id,
                 StockIssueDetail.item_id == item.id
-            ).order_by(StockIssue.issue_date.desc()).all()
+            )
             
-            # Split issues into Rented vs Standard (Exclude damaged items from currently active pool)
-            available_rented_issues = [d for d in issue_details if ((d.rental_price and d.rental_price > 0) or d.is_payable) and not (d.is_damaged == True)]
+            # Use working_id (numeric ID) derived from booking_id prefix parsing if available
+            w_id = None
+            try: w_id = int(working_id)
+            except: pass
+
+            if w_id:
+                from sqlalchemy import or_
+                # Filter to records for this booking or untagged records
+                issue_query = issue_query.filter(
+                    or_(
+                        StockIssue.booking_id == w_id,
+                        StockIssue.booking_id.is_(None)
+                    )
+                )
+            
+            if filter_start:
+                issue_query = issue_query.filter(StockIssue.issue_date >= filter_start)
+            if filter_end:
+                issue_query = issue_query.filter(StockIssue.issue_date <= filter_end)
+                
+            issue_details_all = issue_query.order_by(StockIssue.issue_date.desc()).all()
+
+            # Post-filter: If we have a booking context, exclude records that explicitly belong to OTHER bookings (in notes)
+            if w_id:
+                display_id_patterns = [f"BK-{str(w_id).zfill(6)}", f"PK-{str(w_id).zfill(6)}", f"#{w_id}", f"BK-{w_id}", f"PK-{w_id}"]
+                issue_details = []
+                for d in issue_details_all:
+                    if d.issue.booking_id == w_id:
+                        issue_details.append(d)
+                        continue
+                    
+                    # If untagged, check notes for mention of other guests/bookings
+                    notes = (d.issue.notes or "").upper()
+                    has_any_bk = "BK-" in notes or "PK-" in notes or "BOOKING " in notes or "FOR BK" in notes
+                    if has_any_bk:
+                        # Only keep if it mentions OUR booking
+                        matches_ours = any(p.upper() in notes for p in display_id_patterns)
+                        if matches_ours:
+                            issue_details.append(d)
+                        else:
+                            # Mentions a different booking, exclude from this guest's view
+                            continue
+                    else:
+                        # No specific booking mentioned, assume it's preparation stock or general room issue
+                        issue_details.append(d)
+            else:
+                issue_details = issue_details_all
+            
+            # Split issues into Rented vs Standard - Only items with rental_price > 0 are truly "Rented"
+            # is_payable items (like Water) are consumables, not rentals.
+            active_rented_issues = [d for d in issue_details if (d.rental_price and d.rental_price > 0)]
+            good_rented_issues = [d for d in active_rented_issues if not d.is_damaged]
+            damaged_issues = [d for d in issue_details if d.is_damaged]
+            # All good issues (Standard + Rented) for consumables processing - This fixes the breakdown visibility
+            good_issues = [d for d in issue_details if not d.is_damaged]
             
             # Determine split quantities based on current stock
-            total_rented_need = sum(float(d.issued_quantity) for d in available_rented_issues)
+            total_rented_need = sum(float(d.issued_quantity) for d in good_rented_issues)
+            total_damaged_need = sum(float(d.issued_quantity) for d in damaged_issues)
             current_stock_qty = float(stock.quantity)
             
-            # LOGIC: First reserve stock for Mapped Assets (Fixed), then assign to Rentals, then the rest is standard
+            # LOGIC: First reserve stock for Mapped Assets (Fixed), then Damaged items, then Rentals, then Standard
             mapped_need = float(mapped_counts.get(item.id, 0))
             
             # 1. Base Standard = min(stock, mapped_need)
             base_standard = min(current_stock_qty, mapped_need)
-            remaining_after_mapped = current_stock_qty - base_standard
+            remaining = current_stock_qty - base_standard
             
-            # 2. Rented = min(remaining, total_rented_need)
-            rented_stock_qty = min(remaining_after_mapped, total_rented_need)
+            # 2. Damaged (Actual Physical Units that are Damaged)
+            # We attribute stock to damaged rows first to ensure they are represented accurately
+            actual_damaged_stock = min(remaining, total_damaged_need)
+            remaining -= actual_damaged_stock
             
-            # 3. Final Standard = base_standard + whatever is left
-            standard_stock_qty = base_standard + (remaining_after_mapped - rented_stock_qty)
+            # 3. Rented = min(remaining, total_rented_need)
+            rented_stock_qty = min(remaining, total_rented_need)
+            
+            # 4. Final Standard = base_standard + whatever is left (Standard Good)
+            standard_stock_qty = base_standard + (remaining - rented_stock_qty)
             
             # Helper to process a batch and add to items_dict
             def process_batch(qty, issues, key_suffix, is_rent_split):
-                # Don't show 0 qty rows unless it's the standard row (to show item exists)
-                if qty == 0 and (is_rent_split or (current_stock_qty > 0)): 
+                # DETERMINATION: Should we show this row?
+                is_asset = ((category and category.is_asset_fixed) or item.is_asset_fixed or item.track_laundry_cycle)
+                
+                if qty <= 0:
                     return
 
                 complimentary_qty = 0.0
                 payable_qty = 0.0
-                remaining = qty
+                rem = qty
                 last_issue_price = 0.0
                 
-                # Attribute stock to issues (LIFO based on query order)
                 for detail in issues:
-                    if remaining <= 0: break
+                    if rem <= 0: break
                     issued = float(detail.issued_quantity)
-                    attributed = min(remaining, issued)
+                    attributed = min(rem, issued)
                     
                     if detail.is_payable:
                         payable_qty += attributed
@@ -2007,21 +2006,26 @@ def get_location_items(
                             last_issue_price = float(p)
                     else:
                         complimentary_qty += attributed
-                    remaining -= attributed
+                    rem -= attributed
                 
-                # Pricing
                 selling_price = last_issue_price if last_issue_price > 0 else (item.selling_price if item.selling_price and item.selling_price > 0 else item.unit_price)
                 cost_price = item.unit_price or 0
                 stock_value = qty * cost_price
                 
                 key = f"item_{item.id}{key_suffix}"
-                
-                # Type determination
-                is_asset = ((category and category.is_asset_fixed) or item.is_asset_fixed or item.track_laundry_cycle or (not item.is_sellable_to_guest and not item.is_perishable))
+                display_name = item.name
+                if is_rent_split:
+                    if is_asset:
+                        display_name += " (Rented)"
+                    else:
+                        if payable_qty > 0 and complimentary_qty > 0:
+                            display_name += " (Comp/Payable)"
+                        elif payable_qty > 0:
+                            display_name += " (Payable)"
                 
                 items_dict[key] = {
                     "item_id": item.id,
-                    "item_name": item.name,
+                    "item_name": display_name,
                     "item_code": item.item_code,
                     "category_name": category.name if category else None,
                     "unit": item.unit,
@@ -2043,16 +2047,53 @@ def get_location_items(
                     "is_asset_fixed": item.is_asset_fixed 
                 }
 
-            # 1. Process Rented
-            if rented_stock_qty != 0:
-                process_batch(rented_stock_qty, available_rented_issues, "_rented", True)
+            # Determine if item is an asset
+            is_asset_type = ((category and category.is_asset_fixed) or item.is_asset_fixed or item.track_laundry_cycle)
+
+            # 5. Process Damaged Issues (Actually present in stock)
+            rem_damaged = actual_damaged_stock
+            for dmg in damaged_issues:
+                if rem_damaged <= 0: break
+                issued = float(dmg.issued_quantity)
+                attributed = min(rem_damaged, issued)
                 
-            # 2. Process Standard
-            if standard_stock_qty != 0 or (rented_stock_qty == 0):
-                # Use all issues for standard pool pricing fallback
-                process_batch(standard_stock_qty, issue_details, "", False)
+                is_rented = (dmg.rental_price and dmg.rental_price > 0) or dmg.is_payable
+                display_name = item.name + (" (Rented, Damaged)" if is_rented else " (Damaged)")
+                key = f"item_{item.id}_damaged_{dmg.id}"
+                
+                selling_price = dmg.rental_price if dmg.rental_price and dmg.rental_price > 0 else (item.selling_price if item.selling_price and item.selling_price > 0 else item.unit_price)
+                cost_price = item.unit_price or 0
+                
+                items_dict[key] = {
+                    "item_id": item.id,
+                    "item_name": display_name,
+                    "item_code": item.item_code,
+                    "category_name": category.name if category else None,
+                    "unit": item.unit,
+                    "current_stock": attributed,
+                    "location_stock": attributed,
+                    "is_damaged": True,
+                    "damage_notes": dmg.damage_notes,
+                    "unit_price": cost_price,
+                    "selling_price": selling_price,
+                    "total_value": attributed * cost_price,
+                    "source": "Stock Issue (Damaged)",
+                    "type": "asset" if is_asset_type else "consumable",
+                    "is_rentable": is_rented,
+                    "is_asset_fixed": item.is_asset_fixed
+                }
+                rem_damaged -= attributed
 
-
+            # Process Rented and Standard Good batches
+            if is_asset_type:
+                if rented_stock_qty != 0 or total_rented_need > 0:
+                    process_batch(rented_stock_qty, good_rented_issues, "_rented", True)
+                if standard_stock_qty != 0 or mapped_need > 0 or (rented_stock_qty == 0 and total_rented_need == 0):
+                    process_batch(standard_stock_qty, issue_details, "", False)
+            else:
+                # Use all good issues (not just rented) for consumables to ensure payable/complimentary breakdown is correct
+                is_rent_any = total_rented_need > 0 or any(getattr(d, 'is_payable', False) for d in good_issues)
+                process_batch(standard_stock_qty + rented_stock_qty, good_issues, "", is_rent_any)
 
     # Add items from asset mappings - These are permanently assigned assets
     # MERGE with LocationStock items if they exist to prevent duplicates
@@ -2061,25 +2102,42 @@ def get_location_items(
         if item:
             stock_key = f"item_{item.id}"
             
+            # Check if this mapping is reported as damaged in notes
+            is_dam = "Reported Damaged" in (mapping.notes or "")
+            
             # Check if this item was already added via LocationStock
             if stock_key in items_dict:
                 # MERGE: Update the existing entry to ensure it's treated as a Fixed Asset
+                # Do NOT increment count here, LocationStock is primary source of physical quantity
                 items_dict[stock_key].update({
                     "type": "asset",           # Force type to asset
                     "is_fixed_asset": True,    # Force fixed asset flag
                     "is_rentable": False,      # Force not rentable
                     "source": items_dict[stock_key]["source"] + ", Asset Mapping" # Update source
                 })
-                # We do NOT add a new asset_mapped_ entry to avoid duplicates
+                # Add serial number if available
+                if mapping.serial_number:
+                    existing_sn = items_dict[stock_key].get("serial_number", "")
+                    if mapping.serial_number not in existing_sn:
+                        items_dict[stock_key]["serial_number"] = (existing_sn + ", " + mapping.serial_number) if existing_sn else mapping.serial_number
+
+                if is_dam and "(Damaged)" not in items_dict[stock_key]["item_name"]:
+                    items_dict[stock_key]["item_name"] += " (Damaged)"
+                    items_dict[stock_key]["is_damaged"] = True
             else:
                 # Add as new entry if not in LocationStock
                 # Use standard key format to ensure consistency
                 key = f"asset_mapped_{item.id}"
                 
                 category = inventory_crud.get_category_by_id(db, item.category_id)
+                display_name = item.name
+                if is_dam:
+                    display_name += " (Damaged)"
+                
                 items_dict[key] = {
                     "item_id": item.id,
-                    "item_name": item.name,
+                    "item_name": display_name,
+                    "is_damaged": is_dam,
                     "item_code": item.item_code,
                     "category_name": category.name if category else None,
                     "unit": item.unit,
@@ -2096,40 +2154,85 @@ def get_location_items(
                     "is_rentable": False
                 }
 
-    # Add items from asset registry
+    # Add items from asset registry - MERGE with existing rows to avoid duplicates
     for asset in asset_registry:
         item = asset.item
         if item:
-            key = f"registry_{asset.id}" # Unique per asset instance
-            category = inventory_crud.get_category_by_id(db, item.category_id)
-            items_dict[key] = {
-                "item_id": item.id,
-                "item_name": item.name,
-                "item_code": item.item_code,
-                "category_name": category.name if category else None,
-                "unit": item.unit,
-                "current_stock": 1,
-                "location_stock": 1, # Alias for frontend
-                "min_stock_level": item.min_stock_level,
-                "unit_price": item.unit_price,
-                "total_value": item.unit_price or 0,
-                "source": "Asset Registry",
-                "serial_number": asset.serial_number,
-                "asset_tag": asset.asset_tag_id,
-                "status": asset.status,
-                "type": "asset"
-            }
+            # Check for existing stock-based keys
+            stock_key = f"item_{item.id}"
+            rented_key = f"item_{item.id}_rented"
+            
+            target_key = None
+            if stock_key in items_dict:
+                target_key = stock_key
+            elif rented_key in items_dict:
+                target_key = rented_key
+            
+            if target_key:
+                # MERGE details into the existing row
+                agg = items_dict[target_key]
+                if not agg.get("serial_number"):
+                    agg["serial_number"] = asset.serial_number
+                if not agg.get("asset_tag"):
+                    agg["asset_tag"] = asset.asset_tag_id
+                
+                # Append source info
+                if "Asset Registry" not in agg["source"]:
+                    agg["source"] += ", Asset Registry"
+                
+                # Update status if damaged in registry
+                if asset.status and asset.status.lower() in ["damaged", "broken"]:
+                    agg["is_damaged"] = True
+                    if "(Damaged)" not in agg["item_name"]:
+                        agg["item_name"] += " (Damaged)"
+            else:
+                # Add as new registry_ key if not already represented in stock
+                key = f"registry_{asset.id}"
+                category = inventory_crud.get_category_by_id(db, item.category_id)
+                
+                name = item.name
+                is_damaged = False
+                if asset.status and asset.status.lower() in ["damaged", "broken"]:
+                    name += " (Damaged)"
+                    is_damaged = True
+                
+                items_dict[key] = {
+                    "item_id": item.id,
+                    "item_name": name,
+                    "is_damaged": is_damaged,
+                    "item_code": item.item_code,
+                    "category_name": category.name if category else None,
+                    "unit": item.unit,
+                    "current_stock": 1,
+                    "location_stock": 1, 
+                    "min_stock_level": item.min_stock_level,
+                    "unit_price": item.unit_price,
+                    "total_value": item.unit_price or 0,
+                    "source": "Asset Registry",
+                    "serial_number": asset.serial_number,
+                    "asset_tag": asset.asset_tag_id,
+                    "status": asset.status,
+                    "type": "asset",
+                    "is_asset_fixed": True # Registry items are usually fixed
+                }
     
     # 4. Get History (Stock Issues & Waste Logs)
     history = []
     
     # Stock Issues (Inbound to location)
-    stock_issues_in = db.query(StockIssue).options(
+    stock_issues_in_query = db.query(StockIssue).options(
         joinedload(StockIssue.details).joinedload(StockIssueDetail.item),
         joinedload(StockIssue.issuer)
     ).filter(
         StockIssue.destination_location_id == location_id
-    ).order_by(StockIssue.issue_date.desc()).limit(50).all()
+    )
+    
+    if filter_start:
+        stock_issues_in_query = stock_issues_in_query.filter(StockIssue.issue_date >= filter_start)
+    if filter_end:
+        stock_issues_in_query = stock_issues_in_query.filter(StockIssue.issue_date <= filter_end)
+        
+    stock_issues_in = stock_issues_in_query.order_by(StockIssue.issue_date.desc()).limit(50).all()
     
     for issue in stock_issues_in:
         for detail in issue.details:
@@ -2147,13 +2250,20 @@ def get_location_items(
                 })
 
     # Stock Issues (Outbound from location - Transfers)
-    stock_issues_out = db.query(StockIssue).options(
+    stock_issues_out_query = db.query(StockIssue).options(
         joinedload(StockIssue.details).joinedload(StockIssueDetail.item),
         joinedload(StockIssue.issuer),
         joinedload(StockIssue.destination_location)
     ).filter(
         StockIssue.source_location_id == location_id
-    ).order_by(StockIssue.issue_date.desc()).limit(50).all()
+    )
+    
+    if filter_start:
+        stock_issues_out_query = stock_issues_out_query.filter(StockIssue.issue_date >= filter_start)
+    if filter_end:
+        stock_issues_out_query = stock_issues_out_query.filter(StockIssue.issue_date <= filter_end)
+        
+    stock_issues_out = stock_issues_out_query.order_by(StockIssue.issue_date.desc()).limit(50).all()
 
     for issue in stock_issues_out:
         dest_name = issue.destination_location.name if issue.destination_location else "Unknown"
@@ -2172,13 +2282,20 @@ def get_location_items(
                 })
 
     # Waste Logs (Outbound/Loss from location)
-    waste_logs = db.query(WasteLog).options(
+    waste_logs_query = db.query(WasteLog).options(
         joinedload(WasteLog.item),
         joinedload(WasteLog.food_item),
         joinedload(WasteLog.reporter)
     ).filter(
         WasteLog.location_id == location_id
-    ).order_by(WasteLog.waste_date.desc()).limit(50).all()
+    )
+    
+    if filter_start:
+        waste_logs_query = waste_logs_query.filter(WasteLog.waste_date >= filter_start)
+    if filter_end:
+        waste_logs_query = waste_logs_query.filter(WasteLog.waste_date <= filter_end)
+        
+    waste_logs = waste_logs_query.order_by(WasteLog.waste_date.desc()).limit(50).all()
     
     for log in waste_logs:
         item_name = log.item.name if log.item else (log.food_item.name if log.food_item else "Unknown Item")
@@ -2197,13 +2314,20 @@ def get_location_items(
     # 5. Get Purchase History (Directly Received at Location)
     from app.models.inventory import PurchaseMaster, PurchaseDetail
     
-    purchases = db.query(PurchaseDetail).join(PurchaseMaster).options(
+    purchases_query = db.query(PurchaseDetail).join(PurchaseMaster).options(
         joinedload(PurchaseDetail.item),
         joinedload(PurchaseDetail.purchase_master).joinedload(PurchaseMaster.user)
     ).filter(
         PurchaseMaster.destination_location_id == location_id,
         PurchaseMaster.status == "received"
-    ).order_by(PurchaseMaster.updated_at.desc()).limit(50).all()
+    )
+    
+    if filter_start:
+        purchases_query = purchases_query.filter(PurchaseMaster.updated_at >= filter_start)
+    if filter_end:
+        purchases_query = purchases_query.filter(PurchaseMaster.updated_at <= filter_end)
+        
+    purchases = purchases_query.order_by(PurchaseMaster.updated_at.desc()).limit(50).all()
     
     for detail in purchases:
         purchase = detail.purchase_master
@@ -2303,6 +2427,23 @@ def get_location_items(
     total_items = len(items_list) # Use item count/rows instead of quantity sum
     total_value = sum(item["total_value"] for item in items_list)
     
+    booking_metadata = None
+    if booking_id:
+        try:
+            # Re-fetch or use existing b if it was loaded for dates
+            # We already have filter_start/end, but we need name and IDs
+            if 'b' in locals() and b:
+                booking_metadata = {
+                    "booking_id": b.id,
+                    "display_id": getattr(b, 'display_id', f"BK-{str(b.id).zfill(6)}"),
+                    "guest_name": b.guest_name,
+                    "guest_id": getattr(b, 'user_id', None),
+                    "check_in": b.check_in,
+                    "check_out": b.check_out,
+                    "checked_in_at": b.checked_in_at
+                }
+        except: pass
+
     return {
         "location": {
             "id": location.id,
@@ -2312,6 +2453,7 @@ def get_location_items(
             "room_area": location.room_area,
             "location_type": location.location_type
         },
+        "booking_metadata": booking_metadata,
         "total_items": total_items, # This is the sum of CURRENT LocationStock
         "total_stock_value": total_value,
         "items": items_list,
@@ -2598,17 +2740,23 @@ def get_asset_mappings(
     skip: int = 0,
     limit: int = 100,
     location_id: Optional[int] = None,
+    is_fixed_asset: Optional[bool] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # 1. Fetch Real Mappings
-    real_mappings = inventory_crud.get_all_asset_mappings(db, skip=0, limit=10000, location_id=location_id) # Get all for calculation
-    
-    # 2. Fetch Location Stock for ALL items (not just fixed assets)
-    from app.models.inventory import LocationStock, InventoryItem, Location
+    from app.models.inventory import AssetMapping, InventoryItem, LocationStock, Location
     from sqlalchemy import or_
+
+    # 1. Fetch Real Mappings
+    mapping_query = db.query(AssetMapping).join(InventoryItem)
+    if location_id:
+        mapping_query = mapping_query.filter(AssetMapping.location_id == location_id)
+    if is_fixed_asset is not None:
+        mapping_query = mapping_query.filter(InventoryItem.is_asset_fixed == is_fixed_asset)
     
-    # Filter stocks to exclude inventory points (Warehouses, etc) - ASSETS should be in rooms
+    real_mappings = mapping_query.all()
+    
+    # 2. Fetch Location Stock
     stock_query = db.query(LocationStock).join(InventoryItem).join(Location)
     if location_id:
         stock_query = stock_query.filter(LocationStock.location_id == location_id)
@@ -2620,6 +2768,9 @@ def get_asset_mappings(
                 Location.location_type == "GUEST_ROOM"
             )
         )
+    
+    if is_fixed_asset is not None:
+        stock_query = stock_query.filter(InventoryItem.is_asset_fixed == is_fixed_asset)
         
     stocks = stock_query.all()
     
@@ -3297,3 +3448,52 @@ def return_laundry_items(
     
     db.commit()
     return {"message": "Items returned from laundry successfully"}
+
+
+@router.post("/cleanup-orphaned-assets")
+def cleanup_orphaned_asset_mappings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Cleanup endpoint to deactivate orphaned asset mappings in checked-out rooms.
+    This fixes asset mappings that weren't properly deactivated during return service completion.
+    """
+    from app.models.inventory import AssetMapping
+    from app.models.room import Room
+    
+    # Find all Available rooms (checked out)
+    available_rooms = db.query(Room).filter(Room.status == "Available").all()
+    
+    total_deactivated = 0
+    rooms_cleaned = []
+    
+    for room in available_rooms:
+        if not room.inventory_location_id:
+            continue
+        
+        # Find active asset mappings in this room
+        active_mappings = db.query(AssetMapping).filter(
+            AssetMapping.location_id == room.inventory_location_id,
+            AssetMapping.is_active == True
+        ).all()
+        
+        if active_mappings:
+            room_deactivated = 0
+            for mapping in active_mappings:
+                mapping.is_active = False
+                total_deactivated += 1
+                room_deactivated += 1
+            
+            rooms_cleaned.append({
+                "room_number": room.number,
+                "assets_deactivated": room_deactivated
+            })
+    
+    db.commit()
+    
+    return {
+        "message": f"Cleanup complete! Deactivated {total_deactivated} orphaned asset mappings.",
+        "total_deactivated": total_deactivated,
+        "rooms_cleaned": rooms_cleaned
+    }

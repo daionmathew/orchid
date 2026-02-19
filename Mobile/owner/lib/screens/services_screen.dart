@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/service_provider.dart';
 import '../models/service.dart';
 import '../models/service_request.dart';
+import 'package:intl/intl.dart';
 
 class ServicesScreen extends StatefulWidget {
   const ServicesScreen({super.key});
@@ -97,7 +98,7 @@ class ServiceCatalogTab extends StatelessWidget {
                   const SizedBox(width: 12),
                   _KpiCard(
                     title: 'Avg Price',
-                    value: '\$${avgPrice.toStringAsFixed(0)}',
+                    value: '₹${avgPrice.toStringAsFixed(0)}',
                     icon: Icons.attach_money,
                     color: Colors.orange,
                   ),
@@ -126,7 +127,7 @@ class ServiceCatalogTab extends StatelessWidget {
                                 ),
                                 title: Text(service.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                                 subtitle: Text(service.description, maxLines: 2, overflow: TextOverflow.ellipsis),
-                                trailing: Text('\$${service.charges.toStringAsFixed(2)}', 
+                                trailing: Text('₹${service.charges.toStringAsFixed(2)}', 
                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                                 onTap: () {
                                   final history = provider.assignedServices
@@ -171,7 +172,7 @@ class ServiceCatalogTab extends StatelessWidget {
                                               mainAxisAlignment: MainAxisAlignment.spaceAround,
                                               children: [
                                                 _StatBadge("Total Requests", "${history.length}", Colors.blue),
-                                                _StatBadge("Revenue", "\$${totalRevenue.toStringAsFixed(0)}", Colors.green),
+                                                _StatBadge("Revenue", "₹${totalRevenue.toStringAsFixed(0)}", Colors.green),
                                               ],
                                             ),
                                             const SizedBox(height: 16),
@@ -182,8 +183,8 @@ class ServiceCatalogTab extends StatelessWidget {
                                                 contentPadding: EdgeInsets.zero,
                                                 leading: const Icon(Icons.history, size: 20, color: Colors.grey),
                                                 title: Text("Room ${h.roomNumber} - ${h.status.toUpperCase()}", style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                                                subtitle: Text("${h.assignedAt.split('T').first} • ${h.employeeName}", style: const TextStyle(fontSize: 12)),
-                                                trailing: Text(h.status == 'completed' ? '+\$${service.charges.toInt()}' : '-', style: TextStyle(color: h.status == 'completed' ? Colors.green : Colors.grey, fontWeight: FontWeight.bold)),
+                                                subtitle: Text("${DateFormat('dd-MM-yyyy').format(DateTime.parse(h.assignedAt))} • ${h.employeeName}", style: const TextStyle(fontSize: 12)),
+                                                trailing: Text(h.status == 'completed' ? '+₹${service.charges.toInt()}' : '-', style: TextStyle(color: h.status == 'completed' ? Colors.green : Colors.grey, fontWeight: FontWeight.bold)),
                                               )),
                                             const SizedBox(height: 24),
                                             SizedBox(width: double.infinity, child: ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text("Close"))),
@@ -264,7 +265,7 @@ class ServiceActivityTab extends StatelessWidget {
                    const SizedBox(width: 12),
                   _KpiCard(
                     title: 'Revenue',
-                    value: '\$${revenue.toStringAsFixed(0)}',
+                    value: '₹${revenue.toStringAsFixed(0)}',
                     icon: Icons.attach_money,
                     color: Colors.green,
                   ),
@@ -291,7 +292,7 @@ class ServiceActivityTab extends StatelessWidget {
                                   child: Icon(Icons.room_service, color: _getStatusColor(item.status)),
                                 ),
                                 title: Text('${item.serviceName} (Room ${item.roomNumber})'),
-                                subtitle: Text('Assigned to: ${item.employeeName}\nAt: ${item.assignedAt.split("T").first}'),
+                                subtitle: Text('Assigned to: ${item.employeeName}\nAt: ${DateFormat('dd-MM-yyyy HH:mm').format(DateTime.parse(item.assignedAt))}'),
                                 trailing: Text(item.status.toUpperCase(), 
                                   style: TextStyle(fontWeight: FontWeight.bold, color: _getStatusColor(item.status))),
                               ),
@@ -393,7 +394,7 @@ class ServiceRequestsTab extends StatelessWidget {
                                     if (request.description.isNotEmpty)
                                       Text(request.description, maxLines: 2, overflow: TextOverflow.ellipsis),
                                     const SizedBox(height: 4),
-                                    Text('Status: ${request.status} • ${request.createdAt.split("T").first}',
+                                    Text('Status: ${request.status} • ${DateFormat('dd-MM-yyyy').format(DateTime.parse(request.createdAt))}',
                                       style: TextStyle(color: Colors.grey[600], fontSize: 12)
                                     ),
                                   ],
@@ -444,7 +445,7 @@ class ServiceRequestsTab extends StatelessWidget {
                                               _buildDetailRow("Room", "${request.roomNumber}"),
                                               if (request.description.isNotEmpty)
                                                  _buildDetailRow("Description", request.description),
-                                              _buildDetailRow("Created At", request.createdAt.replaceAll("T", " ").substring(0, 16)),
+                                              _buildDetailRow("Created At", DateFormat('dd-MM-yyyy HH:mm').format(DateTime.parse(request.createdAt))),
                                               if (request.completedAt != null)
                                                 _buildDetailRow("Completed At", request.completedAt!),
                                               
@@ -475,7 +476,7 @@ class ServiceRequestsTab extends StatelessWidget {
                                                        leading: const Icon(Icons.broken_image, color: Colors.red),
                                                        title: Text(item['item_name'] ?? 'Asset', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
                                                         subtitle: Text("Damage: ${item['description'] ?? 'Reported'}"),
-                                                        trailing: Text("\$${item['cost'] ?? 0}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                                                        trailing: Text("₹${item['cost'] ?? 0}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
                                                      ),
                                                    )),
                                                 ]

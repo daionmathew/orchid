@@ -195,8 +195,8 @@ def create_journal_entry(db: Session, entry: JournalEntryCreate, created_by: Opt
     # Check if entry is balanced (allow small rounding differences)
     if abs(total_debits - total_credits) > 0.01:
         raise ValueError(
-            f"Journal entry must balance. Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Journal entry must balance. Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
     
     # Validate each line has either debit OR credit (not both, not neither)

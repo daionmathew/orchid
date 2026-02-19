@@ -7,15 +7,9 @@ import { LineChart, Line, ResponsiveContainer, Tooltip as RechartsTooltip } from
 import { toast } from "react-hot-toast";
 import { motion } from "framer-motion";
 import { getMediaBaseUrl } from "../utils/env";
+import { getImageUrl } from "../utils/imageUtils";
 
-// Get the correct base URL based on environment
-const getImageUrl = (imageUrl) => {
-  if (!imageUrl) return 'https://placehold.co/400x300/e2e8f0/a0aec0?text=No+Image';
-  if (imageUrl.startsWith('http')) return imageUrl; // Already a full URL
-  const baseUrl = getMediaBaseUrl();
-  const normalized = imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`;
-  return `${baseUrl}${normalized}`;
-};
+// Utility moved to utils/imageUtils.js
 
 // KPI Card for quick stats
 const KpiCard = ({ title, value, icon, color }) => (
@@ -142,6 +136,94 @@ const BookingModal = ({ onClose, roomNumber, bookings, filter, setFilter, checki
   );
 };
 
+const RoomImageGallery = ({ room, getImageUrl, setSelectedImage }) => {
+  const [currentIndex, setCurrentIndex] = React.useState(0);
+  const images = [];
+  if (room.image_url) images.push(room.image_url);
+
+  if (room.extra_images) {
+    try {
+      const extras = JSON.parse(room.extra_images);
+      if (Array.isArray(extras)) {
+        extras.forEach(img => {
+          if (img && !images.includes(img)) images.push(img);
+        });
+      }
+    } catch (e) {
+      console.error("Error parsing extra images:", e);
+    }
+  }
+
+  const nextImg = (e) => {
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev + 1) % images.length);
+  };
+
+  const prevImg = (e) => {
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev - 1 + images.length) % images.length);
+  };
+
+  if (images.length === 0) {
+    return (
+      <div className="relative h-48 bg-gray-200 flex items-center justify-center text-gray-400">
+        <i className="fas fa-image text-3xl"></i>
+        <span className={`absolute top-2 right-2 px-3 py-1 text-xs font-semibold text-white rounded-full ${room.status === 'Available' ? 'bg-green-500' : room.status === 'Booked' ? 'bg-red-500' : 'bg-yellow-500'
+          }`}>{room.status}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-48 group">
+      <img
+        src={getImageUrl(images[currentIndex])}
+        alt={`Room ${room.number} - Image ${currentIndex + 1}`}
+        className="h-full w-full object-cover cursor-pointer transition-opacity duration-300"
+        onClick={() => setSelectedImage(images[currentIndex])}
+        onError={(e) => {
+          console.error(`Failed to load room image: ${e.target.src}`);
+          e.target.src = 'https://placehold.co/400x300/e2e8f0/a0aec0?text=Image+Load+Error';
+        }}
+      />
+
+      {images.length > 1 && (
+        <>
+          <button
+            onClick={prevImg}
+            className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white w-8 h-8 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10"
+          >
+            <i className="fas fa-chevron-left text-sm"></i>
+          </button>
+          <button
+            onClick={nextImg}
+            className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white w-8 h-8 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10"
+          >
+            <i className="fas fa-chevron-right text-sm"></i>
+          </button>
+
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
+            {images.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={(e) => { e.stopPropagation(); setCurrentIndex(idx); }}
+                className={`w-2 h-2 rounded-full transition-all ${idx === currentIndex ? 'bg-white scale-110' : 'bg-white/50 hover:bg-white/80'}`}
+              />
+            ))}
+          </div>
+
+          <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
+            {currentIndex + 1} / {images.length}
+          </div>
+        </>
+      )}
+
+      <span className={`absolute top-2 right-2 px-3 py-1 text-xs font-semibold text-white rounded-full ${room.status === 'Available' ? 'bg-green-500' : room.status === 'Booked' ? 'bg-red-500' : 'bg-yellow-500'
+        }`}>{room.status}</span>
+    </div>
+  );
+};
+
 // Image Modal for viewing full room image
 const ImageModal = ({ imageUrl, onClose }) => {
   if (!imageUrl) return null;
@@ -174,7 +256,7 @@ const Rooms = ({ noLayout = false }) => {
     status: "Available",
     adults: 2,
     children: 0,
-    image: null,
+    images: [],
     air_conditioning: false,
     wifi: false,
     bathroom: false,
@@ -188,7 +270,7 @@ const Rooms = ({ noLayout = false }) => {
     dining: false,
     breakfast: false,
   });
-  const [previewImage, setPreviewImage] = useState(null);
+  const [previewImages, setPreviewImages] = useState([]);
   const [bannerMessage, setBannerMessage] = useState({ type: null, text: "" });
   const [bookings, setBookings] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
@@ -203,6 +285,7 @@ const Rooms = ({ noLayout = false }) => {
   const [bookingFilter, setBookingFilter] = useState("booked"); // Filter for booking modal
   const [bookingCheckinFilter, setBookingCheckinFilter] = useState(""); // Check-in date filter
   const [bookingCheckoutFilter, setBookingCheckoutFilter] = useState(""); // Check-out date filter
+  const [showAddRoomModal, setShowAddRoomModal] = useState(false); // Control add room modal visibility
 
   // Function to show banner message
   const showBannerMessage = (type, text) => {
@@ -213,9 +296,20 @@ const Rooms = ({ noLayout = false }) => {
     setBannerMessage({ type: null, text: "" });
   };
 
+
   useEffect(() => {
     fetchRooms();
   }, []);
+
+  // Cleanup object URLs to prevent memory leaks
+  // useEffect(() => {
+  //   return () => {
+  //     if (previewImage && previewImage.startsWith('blob:')) {
+  //       URL.revokeObjectURL(previewImage);
+  //     }
+  //   };
+  // }, [previewImage]);
+
 
   const fetchRooms = async () => {
     try {
@@ -292,33 +386,120 @@ const Rooms = ({ noLayout = false }) => {
     }
   };
 
+  // Compress image before upload for faster performance
+  const compressImage = (file, maxWidth = 1200, quality = 0.8) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          // Resize if image is too large
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Convert to blob with compression
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                // Create a new file from the blob
+                const compressedFile = new File([blob], file.name, {
+                  type: 'image/jpeg',
+                  lastModified: Date.now(),
+                });
+                resolve(compressedFile);
+              } else {
+                reject(new Error('Canvas to Blob conversion failed'));
+              }
+            },
+            'image/jpeg',
+            quality
+          );
+        };
+        img.onerror = reject;
+      };
+      reader.onerror = reject;
+    });
+  };
+
   const handleChange = (e) => {
     const { name, value, files, type, checked } = e.target;
     if (name === "image") {
-      const file = files[0];
-      if (file) {
-        // Check file size (5MB limit)
-        const maxSize = 5 * 1024 * 1024; // 5MB in bytes
-        if (file.size > maxSize) {
-          showBannerMessage("error", "Image file is too large. Please select an image smaller than 5MB.");
-          return;
-        }
+      const selectedFiles = Array.from(files || []);
+      if (selectedFiles.length === 0) return;
 
-        // Check file type
-        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-        if (!allowedTypes.includes(file.type)) {
-          showBannerMessage("error", "Please select a valid image file (JPEG, PNG, or WebP).");
+      // 1. Instant Previews
+      const currentPreviews = [];
+      const readNext = (index) => {
+        if (index >= selectedFiles.length) {
+          setPreviewImages(prev => [...prev, ...currentPreviews]);
           return;
         }
-      }
-      setForm((prev) => ({ ...prev, image: file }));
-      setPreviewImage(file ? URL.createObjectURL(file) : null);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          currentPreviews.push(reader.result);
+          readNext(index + 1);
+        };
+        reader.readAsDataURL(selectedFiles[index]);
+      };
+      readNext(0);
+
+      // 2. Set for upload
+      setForm(prev => ({ ...prev, images: [...prev.images, ...selectedFiles] }));
+
+      // 3. Background Optimize
+      selectedFiles.forEach(file => {
+        compressImage(file, 1600, 0.85)
+          .then(optimized => {
+            setForm(prev => ({
+              ...prev,
+              images: prev.images.map(img => img === file ? optimized : img)
+            }));
+          })
+          .catch(console.error);
+      });
+
     } else if (type === "checkbox") {
       setForm((prev) => ({ ...prev, [name]: checked }));
     } else {
       setForm((prev) => ({ ...prev, [name]: value }));
     }
   };
+
+  const removeImage = (idx) => {
+    const src = previewImages[idx];
+    const isNew = src && src.startsWith('data:');
+
+    if (isNew) {
+      // Find index in form.images by counting how many data: images came before this one
+      let fileIdx = 0;
+      for (let i = 0; i < idx; i++) {
+        if (previewImages[i] && previewImages[i].startsWith('data:')) {
+          fileIdx++;
+        }
+      }
+      setForm(prev => {
+        const updatedImages = [...prev.images];
+        updatedImages.splice(fileIdx, 1);
+        return { ...prev, images: updatedImages };
+      });
+    }
+
+    setPreviewImages(prev => prev.filter((_, i) => i !== idx));
+  };
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -329,7 +510,12 @@ const Rooms = ({ noLayout = false }) => {
     formData.append("status", form.status);
     formData.append("adults", form.adults || 2);
     formData.append("children", form.children || 0);
-    if (form.image) formData.append("image", form.image);
+
+    if (form.images && form.images.length > 0) {
+      form.images.forEach(img => {
+        formData.append("images", img);
+      });
+    }
 
     // Append feature fields
     formData.append("air_conditioning", form.air_conditioning);
@@ -386,13 +572,15 @@ const Rooms = ({ noLayout = false }) => {
         garden: false,
         dining: false,
         breakfast: false,
-      });
-      setPreviewImage(null);
+      })
+      setPreviewImages([]);
+      setShowAddRoomModal(false); // Close modal after successful submission
     } catch (err) {
       console.error("API error:", err);
       showBannerMessage("error", `Error ${isEditing ? "updating" : "creating"} room`);
     }
   };
+
 
   const handleEdit = (room) => {
     setIsEditing(true);
@@ -404,7 +592,7 @@ const Rooms = ({ noLayout = false }) => {
       status: room.status,
       adults: room.adults,
       children: room.children,
-      image: null,
+      images: [],
       air_conditioning: room.air_conditioning || false,
       wifi: room.wifi || false,
       bathroom: room.bathroom || false,
@@ -418,9 +606,20 @@ const Rooms = ({ noLayout = false }) => {
       dining: room.dining || false,
       breakfast: room.breakfast || false,
     });
-    setPreviewImage(getImageUrl(room.image_url));
+
+    // Set previews for existing images
+    const existingPreviews = [];
+    if (room.image_url) existingPreviews.push(getImageUrl(room.image_url));
+    if (room.extra_images) {
+      try {
+        const extras = JSON.parse(room.extra_images);
+        extras.forEach(url => existingPreviews.push(getImageUrl(url)));
+      } catch (e) { console.error("Error parsing extra images", e); }
+    }
+    setPreviewImages(existingPreviews);
+
     setBannerMessage({ type: null, text: "" });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setShowAddRoomModal(true); // Open modal for editing
   };
 
   const handleDelete = async (roomId) => {
@@ -469,248 +668,26 @@ const Rooms = ({ noLayout = false }) => {
         <KpiCard title="Occupancy Rate" value={`${occupancyRate}%`} color="bg-gradient-to-r from-purple-500 to-purple-700" icon={<i className="fas fa-chart-pie"></i>} />
       </div>
 
-      {/* Room Form */}
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white p-4 sm:p-6 md:p-8 rounded-xl sm:rounded-2xl shadow-lg mb-6 sm:mb-8"
-      >
-        <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-gray-800">
-          {isEditing ? "Edit Room" : "Add New Room"}
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Room Number</label>
-            <input
-              type="text"
-              name="number"
-              placeholder="e.g., 101"
-              value={form.number}
-              onChange={handleChange}
-              className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
-              required
-              disabled={isEditing}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Room Type</label>
-            <input
-              type="text"
-              name="type"
-              placeholder="e.g., Deluxe"
-              value={form.type}
-              onChange={handleChange}
-              className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Price (₹)</label>
-            <input
-              type="number"
-              name="price"
-              placeholder="e.g., 5000"
-              value={form.price}
-              onChange={handleChange}
-              className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Adults Capacity</label>
-            <input
-              type="number"
-              name="adults"
-              placeholder="e.g., 2"
-              value={form.adults}
-              onChange={handleChange}
-              className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
-              min="1"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Children Capacity</label>
-            <input
-              type="number"
-              name="children"
-              placeholder="e.g., 1"
-              value={form.children}
-              onChange={handleChange}
-              className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
-              min="0"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-            <select
-              name="status"
-              value={form.status}
-              onChange={handleChange}
-              className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
-            >
-              <option>Available</option>
-              <option>Maintenance</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Room Image</label>
-            <input
-              type="file"
-              name="image"
-              accept="image/jpeg,image/jpg,image/png,image/webp"
-              onChange={handleChange}
-              className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 transition-all"
-            />
-            <p className="text-xs text-gray-500 mt-1">Max file size: 5MB. Supported formats: JPEG, PNG, WebP</p>
-          </div>
 
-          {/* Show preview if image selected */}
-          {previewImage && (
-            <img
-              src={previewImage}
-              alt="Preview"
-              className="w-full h-32 object-cover rounded-lg border-2 border-gray-200"
-            />
-          )}
+      {/* Add Room Button */}
+      <div className="mb-6">
+        <button
+          onClick={() => setShowAddRoomModal(true)}
+          className="bg-gradient-to-r from-indigo-600 to-indigo-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 flex items-center gap-2"
+        >
+          <i className="fas fa-plus-circle"></i>
+          Add New Room
+        </button>
+      </div>
 
-          {/* Room Features Section */}
-          <div className="md:col-span-2 lg:col-span-3">
-            <label className="block text-sm font-medium text-gray-700 mb-3">Room Features & Amenities</label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="air_conditioning"
-                  checked={form.air_conditioning}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Air Conditioning</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="wifi"
-                  checked={form.wifi}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Free Wifi</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="bathroom"
-                  checked={form.bathroom}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Private Bathroom</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="living_area"
-                  checked={form.living_area}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Living Room</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="terrace"
-                  checked={form.terrace}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Terrace</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="parking"
-                  checked={form.parking}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Free Parking</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="kitchen"
-                  checked={form.kitchen}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Kitchen</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="family_room"
-                  checked={form.family_room}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Family Room</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="bbq"
-                  checked={form.bbq}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">BBQ</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="garden"
-                  checked={form.garden}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Garden</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="dining"
-                  checked={form.dining}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Dining Area</span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  name="breakfast"
-                  checked={form.breakfast}
-                  onChange={handleChange}
-                  className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                />
-                <span className="text-sm text-gray-700">Breakfast</span>
-              </label>
-            </div>
-          </div>
-          <div className="md:col-span-2 lg:col-span-3 flex items-center gap-4">
+      {/* Add Room Modal */}
+      {showAddRoomModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white p-4 sm:p-6 md:p-8 rounded-xl sm:rounded-2xl shadow-2xl relative max-w-4xl w-full my-8 max-h-[90vh] overflow-y-auto">
             <button
-              type="submit"
-              className="w-full bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-indigo-700 transition-transform transform hover:-translate-y-1"
-            >
-              {isEditing ? "Update Room" : "Add Room"}
-            </button>
-            {isEditing && (
-              <button
-                type="button"
-                onClick={() => {
-                  setIsEditing(false);
-                  setEditRoomId(null);
+              onClick={() => {
+                setShowAddRoomModal(false);
+                if (!isEditing) {
                   setForm({
                     number: "",
                     type: "",
@@ -718,7 +695,7 @@ const Rooms = ({ noLayout = false }) => {
                     status: "Available",
                     adults: 2,
                     children: 0,
-                    image: null,
+                    images: [],
                     air_conditioning: false,
                     wifi: false,
                     bathroom: false,
@@ -732,22 +709,328 @@ const Rooms = ({ noLayout = false }) => {
                     dining: false,
                     breakfast: false,
                   });
-                  setPreviewImage(null);
-                  setBannerMessage({ type: null, text: "" });
-                }}
-                className="w-full bg-gray-500 text-white font-semibold py-3 px-6 rounded-lg hover:bg-gray-600 transition"
-              >
-                Cancel Edit
-              </button>
-            )}
+                  setPreviewImages([]);
+                }
+              }}
+              className="absolute top-2 sm:top-4 right-2 sm:right-4 text-gray-500 hover:text-gray-800 text-3xl font-bold z-10 w-10 h-10 flex items-center justify-center"
+            >
+              &times;
+            </button>
+
+            {/* Room Form */}
+            <form onSubmit={handleSubmit}>
+              <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-gray-800 pr-12">
+                {isEditing ? "Edit Room" : "Add New Room"}
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Room Number</label>
+                  <input
+                    type="text"
+                    name="number"
+                    placeholder="e.g., 101"
+                    value={form.number}
+                    onChange={handleChange}
+                    className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
+                    required
+                    disabled={isEditing}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Room Type</label>
+                  <input
+                    type="text"
+                    name="type"
+                    placeholder="e.g., Deluxe"
+                    value={form.type}
+                    onChange={handleChange}
+                    className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Price (₹)</label>
+                  <input
+                    type="number"
+                    name="price"
+                    placeholder="e.g., 5000"
+                    value={form.price}
+                    onChange={handleChange}
+                    className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Adults Capacity</label>
+                  <input
+                    type="number"
+                    name="adults"
+                    placeholder="e.g., 2"
+                    value={form.adults}
+                    onChange={handleChange}
+                    className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
+                    min="1"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Children Capacity</label>
+                  <input
+                    type="number"
+                    name="children"
+                    placeholder="e.g., 1"
+                    value={form.children}
+                    onChange={handleChange}
+                    className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
+                    min="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                  <select
+                    name="status"
+                    value={form.status}
+                    onChange={handleChange}
+                    className="w-full p-3 rounded-lg border border-gray-300 focus:border-indigo-500 focus:ring focus:ring-indigo-200 transition-all"
+                  >
+                    <option>Available</option>
+                    <option>Maintenance</option>
+                  </select>
+                </div>
+                <div className="md:col-span-2 lg:col-span-3">
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-sm font-medium text-gray-700">Room Images</label>
+                    {previewImages.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPreviewImages([]);
+                          setForm(prev => ({ ...prev, images: [] }));
+                        }}
+                        className="text-xs text-red-600 hover:text-red-800 font-medium"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="file"
+                    name="image"
+                    multiple
+                    accept="image/jpeg,image/jpg,image/png,image/webp"
+                    onChange={handleChange}
+                    className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 transition-all"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">You can select multiple images. Supported formats: JPEG, PNG, WebP</p>
+
+                  {previewImages.length > 0 && (
+                    <div className="mt-4 p-4 border-2 border-dashed border-indigo-200 rounded-2xl bg-indigo-50/30">
+                      <p className="text-sm font-semibold text-indigo-700 mb-3 flex items-center">
+                        <span className="mr-2">🖼️</span> Room Previews ({previewImages.length})
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {previewImages.map((src, idx) => (
+                          <div key={idx} className="group relative aspect-video bg-white rounded-lg overflow-hidden shadow-md border border-indigo-100">
+                            <img
+                              src={src}
+                              alt={`Preview ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeImage(idx)}
+                              className="absolute top-1 right-1 bg-red-500 text-white w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg hover:bg-red-600 z-10"
+                              title="Remove image"
+                            >
+                              &times;
+                            </button>
+                            <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Room Features Section */}
+              <div className="md:col-span-2 lg:col-span-3">
+                <label className="block text-sm font-medium text-gray-700 mb-3">Room Features & Amenities</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="air_conditioning"
+                      checked={form.air_conditioning}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Air Conditioning</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="wifi"
+                      checked={form.wifi}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Free Wifi</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="bathroom"
+                      checked={form.bathroom}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Private Bathroom</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="living_area"
+                      checked={form.living_area}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Living Room</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="terrace"
+                      checked={form.terrace}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Terrace</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="parking"
+                      checked={form.parking}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Free Parking</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="kitchen"
+                      checked={form.kitchen}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Kitchen</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="family_room"
+                      checked={form.family_room}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Family Room</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="bbq"
+                      checked={form.bbq}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">BBQ</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="garden"
+                      checked={form.garden}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Garden</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="dining"
+                      checked={form.dining}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Dining Area</span>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="breakfast"
+                      checked={form.breakfast}
+                      onChange={handleChange}
+                      className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Breakfast</span>
+                  </label>
+                </div>
+              </div>
+              <div className="md:col-span-2 lg:col-span-3 flex items-center gap-4">
+                <button
+                  type="submit"
+                  className="w-full bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-indigo-700 transition-transform transform hover:-translate-y-1"
+                >
+                  {isEditing ? "Update Room" : "Add Room"}
+                </button>
+                {isEditing && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditing(false);
+                      setEditRoomId(null);
+                      setForm({
+                        number: "",
+                        type: "",
+                        price: "",
+                        status: "Available",
+                        adults: 2,
+                        children: 0,
+                        images: [],
+                        air_conditioning: false,
+                        wifi: false,
+                        bathroom: false,
+                        living_area: false,
+                        terrace: false,
+                        parking: false,
+                        kitchen: false,
+                        family_room: false,
+                        bbq: false,
+                        garden: false,
+                        dining: false,
+                        breakfast: false,
+                      });
+                      setPreviewImages([]);
+                      setBannerMessage({ type: null, text: "" });
+                      setShowAddRoomModal(false);
+                    }}
+                    className="w-full bg-gray-500 text-white font-semibold py-3 px-6 rounded-lg hover:bg-gray-600 transition"
+                  >
+                    Cancel Edit
+                  </button>
+                )}
+              </div>
+            </form>
           </div>
-        </div>
-      </form>
+        </div >
+      )}
 
       {/* Rooms Grid */}
       <div className="bg-white p-4 sm:p-6 md:p-8 rounded-xl sm:rounded-2xl shadow-lg">
         <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 justify-between items-start sm:items-center mb-4 sm:mb-6">
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 w-full sm:w-auto">All Rooms</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 w-full sm:w-auto">All Rooms (Multi-Image Enabled)</h2>
           <div className="flex flex-col sm:flex-row flex-wrap gap-2 sm:gap-4 w-full sm:w-auto">
             <select onChange={(e) => setFilter(prev => ({ ...prev, type: e.target.value }))} className="p-2 text-sm border border-gray-300 rounded-lg w-full sm:w-auto">
               <option value="all">All Types</option>
@@ -764,16 +1047,11 @@ const Rooms = ({ noLayout = false }) => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
           {filteredRooms.map((room) => (
             <motion.div key={room.id} className="bg-gray-50 rounded-2xl shadow-md overflow-hidden border border-gray-200 hover:shadow-xl transition-all duration-300 flex flex-col" whileHover={{ y: -5 }}>
-              <div className="relative">
-                <img
-                  src={getImageUrl(room.image_url)}
-                  alt={`Room ${room.number}`}
-                  className="h-48 w-full object-cover cursor-pointer"
-                  onClick={() => setSelectedImage(room.image_url)}
-                />
-                <span className={`absolute top-2 right-2 px-3 py-1 text-xs font-semibold text-white rounded-full ${room.status === 'Available' ? 'bg-green-500' : room.status === 'Booked' ? 'bg-red-500' : 'bg-yellow-500'
-                  }`}>{room.status}</span>
-              </div>
+              <RoomImageGallery
+                room={room}
+                getImageUrl={getImageUrl}
+                setSelectedImage={setSelectedImage}
+              />
               <div className="p-5 flex flex-col flex-grow">
                 <div className="flex justify-between items-start">
                   <div>
@@ -848,27 +1126,31 @@ const Rooms = ({ noLayout = false }) => {
       </div>
 
       {/* Booking Data Modal */}
-      {showBookingModal && (
-        <BookingModal
-          onClose={() => setShowBookingModal(false)}
-          roomNumber={selectedRoomNumber}
-          bookings={bookings}
-          filter={bookingFilter}
-          setFilter={setBookingFilter}
-          checkinFilter={bookingCheckinFilter}
-          setCheckinFilter={setBookingCheckinFilter}
-          checkoutFilter={bookingCheckoutFilter}
-          setCheckoutFilter={setBookingCheckoutFilter}
-        />
-      )}
+      {
+        showBookingModal && (
+          <BookingModal
+            onClose={() => setShowBookingModal(false)}
+            roomNumber={selectedRoomNumber}
+            bookings={bookings}
+            filter={bookingFilter}
+            setFilter={setBookingFilter}
+            checkinFilter={bookingCheckinFilter}
+            setCheckinFilter={setBookingCheckinFilter}
+            checkoutFilter={bookingCheckoutFilter}
+            setCheckoutFilter={setBookingCheckoutFilter}
+          />
+        )
+      }
 
       {/* Image Modal */}
-      {selectedImage && (
-        <ImageModal
-          imageUrl={selectedImage}
-          onClose={() => setSelectedImage(null)}
-        />
-      )}
+      {
+        selectedImage && (
+          <ImageModal
+            imageUrl={selectedImage}
+            onClose={() => setSelectedImage(null)}
+          />
+        )
+      }
     </>
   );
 

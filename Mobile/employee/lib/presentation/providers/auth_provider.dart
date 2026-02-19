@@ -115,12 +115,19 @@ class AuthProvider extends ChangeNotifier {
       final response = await _apiService.dio.get(ApiConstants.profile);
       if (response.statusCode == 200 && response.data != null) {
           final data = response.data;
-          if (data['id'] != null) {
-              _employeeId = data['id'];
-              _userName = data['name'];
-              _userImage = data['image_url'];
-              print("Patched Employee Profile via /me: $_userName, $_employeeId, $_userImage");
+          // IMPORTANT: data['id'] is User ID. We need Employee ID from the 'employee' object.
+          if (data['employee'] != null) {
+              final empData = data['employee'];
+              _employeeId = empData['id'];
+              _userName = empData['name'];
+              _userImage = empData['image_url'];
+              print("Patched Employee Profile via /me: $_userName, EMID:$_employeeId, Image:$_userImage");
               notifyListeners();
+          } else {
+              // Fallback if no employee record but we have user data
+              _userId = data['id'];
+              _userName = data['email'];
+              print("User logged in but no employee record found for ID: $_userId");
           }
       }
     } catch (e) {

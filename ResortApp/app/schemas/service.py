@@ -12,6 +12,7 @@ class ServiceBase(BaseModel):
     description: Optional[str] = None
     charges: float
     is_visible_to_guest: bool = False  # Toggle for guest visibility
+    average_completion_time: Optional[str] = None # e.g., "30 minutes"
 
 class ServiceCreate(ServiceBase):
     inventory_items: Optional[List[ServiceInventoryItemBase]] = []  # List of inventory items with quantities
@@ -81,13 +82,16 @@ class AssignedServiceCreate(AssignedServiceBase):
     billing_status: Optional[str] = "unbilled"  # Explicitly track billing status
     extra_inventory_items: Optional[List[ServiceInventoryItemBase]] = []  # Additional items beyond service template
     inventory_source_selections: Optional[List["InventorySourceSelection"]] = []  # Explicit source for items
+    booking_id: Optional[int] = None
+    package_booking_id: Optional[int] = None
 
 class InventorySourceSelection(BaseModel):
     item_id: int
     location_id: int
 
 class InventoryReturnItem(BaseModel):
-    inventory_item_id: int
+    assignment_id: Optional[int] = None
+    inventory_item_id: Optional[int] = None
     quantity_returned: float
     quantity_used: Optional[float] = 0.0  # Allow updating used quantity
     notes: Optional[str] = None
@@ -105,11 +109,15 @@ class AssignedServiceOut(BaseModel):
     service_id: int  # Add for filtering
     employee_id: int  # Add for filtering
     room_id: int  # Add for filtering
+    booking_id: Optional[int] = None
+    package_booking_id: Optional[int] = None
     service: ServiceOut
     employee: EmployeeOut
     room: RoomOut
     assigned_at: datetime
     status: ServiceStatus
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
     last_used_at: Optional[datetime] = None  # Timestamp when service was last used (during checkout)
     override_charges: Optional[float] = None
     inventory_items_used: Optional[List[ServiceInventoryItemOut]] = []  # Actual items used (template + extra)

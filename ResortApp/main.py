@@ -1,5 +1,6 @@
 # app/main.py - Trigger Reload
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
+print(">>> STARTING WITH NEW MAIN.PY - DEBUG VERSION 2 <<<") # Confirm file load
 # Force Reload Fix 14 (Trigger Reload for Bill Filter Fix)
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
@@ -12,6 +13,8 @@ from pathlib import Path
 import os
 import traceback
 from time import time
+from sqlalchemy.orm import Session
+from typing import Any, List
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -47,6 +50,7 @@ from app.api import (
     # activity,
     frontend, # Added frontend module
 )
+from app.api.settings import router as settings_router
 from app.api import reports_module
 
 # Import recipe router separately to catch any import errors
@@ -98,6 +102,8 @@ except Exception as e:
 from app.database import engine, Base
 
 # Create database tables
+from app.models.settings import SystemSetting
+from app.utils.auth import get_db
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -202,12 +208,20 @@ class PerformanceMiddleware(BaseHTTPMiddleware):
         response.headers["X-Process-Time"] = str(round(process_time, 3))
         
         # Add caching headers for GET requests (5 minutes for dynamic, 1 hour for static)
+        # Add caching headers for GET requests (5 minutes for dynamic, 1 hour for static)
+        # Add caching headers for GET requests (5 minutes for dynamic, 1 hour for static)
         if request.method == "GET":
+            path = str(request.url.path)
+            print(f"[DEBUG-PERF] Path: {path}") # Add debug print
+            # Disable cache for critical real-time endpoints
+            if any(p in path for p in ["/bill/active-rooms", "/active-rooms", "/bookings", "/checkout"]):
+                 response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                 print(f"[DEBUG-PERF] Disabled Cache for: {path}")
             # Cache static/semi-static endpoints longer
-            if any(path in str(request.url.path) for path in ["/rooms", "/packages", "/services", "/food-items", "/inventory/items"]):
+            elif any(p in path for p in ["/rooms", "/packages", "/services", "/food-items", "/inventory/items"]):
                 response.headers["Cache-Control"] = "public, max-age=300"  # 5 minutes
             else:
-                response.headers["Cache-Control"] = "public, max-age=60"  # 1 minute for dynamic data
+                response.headers["Cache-Control"] = "public, max-age=999"  # Changed to 999 to verify deployment
         
         # Log slow requests (> 1 second)
         if process_time > 1.0:
@@ -229,22 +243,27 @@ if landing_page_path.exists():
 # Mount dashboard build files (React build)
 dashboard_build_path = Path("../dasboard/build")
 if dashboard_build_path.exists():
-    app.mount(
-        "/admin-static",
-        StaticFiles(directory="../dasboard/build/static"),
-        name="admin-static",
-    )
+    static_path = dashboard_build_path / "static"
+    if static_path.exists():
+        app.mount(
+            "/admin-static",
+            StaticFiles(directory=str(static_path)),
+            name="admin-static",
+        )
 
 # Mount user end build files
 userend_build_path = Path("../userend/build")
 if userend_build_path.exists():
-    app.mount(
-        "/user-static",
-        StaticFiles(directory="../userend/build/static"),
-        name="user-static",
-    )
+    static_path = userend_build_path / "static"
+    if static_path.exists():
+        app.mount(
+            "/user-static",
+            StaticFiles(directory=str(static_path)),
+            name="user-static",
+        )
 
 # API Routes
+app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 app.include_router(auth.router, prefix="/api", tags=["Authentication"])
 app.include_router(user.router, prefix="/api", tags=["Users"])
 app.include_router(room.router, prefix="/api", tags=["Rooms"])
@@ -286,6 +305,7 @@ app.include_router(account.router, prefix="/api", tags=["Accounts"])
 app.include_router(gst_reports.router, prefix="/api", tags=["GST Reports"])
 app.include_router(reports_module.router, prefix="/api", tags=["Reports Module"])
 app.include_router(attendance.router, prefix="/api", tags=["Attendance"])
+
 # Notification system re-enabled
 app.include_router(notification.router, prefix="/api", tags=["Notifications"])
 # app.include_router(activity.router, prefix="/api/activity", tags=["Activity Logs"])
@@ -432,6 +452,6 @@ if __name__ == "__main__":
     import uvicorn
     import os
 
-    # Get port from environment or default to 8011 for Orchid
-    port = int(os.getenv("PORT", 8011))
+    # Get port from environment or default to 8012 for Orchid (Avoiding 8011 conflict)
+    port = int(os.getenv("PORT", 8012))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)

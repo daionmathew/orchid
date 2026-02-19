@@ -111,9 +111,9 @@ def calculate_tax_breakdown(taxable_value: float, tax_rate: float, is_interstate
 def get_room_tax_rate(room_tariff: float) -> float:
     """
     Get GST rate for room based on tariff slab (per night)
-    - Rooms < ₹5,000: 5% GST
-    - Rooms ₹5,000 - ₹7,499: 12% GST
-    - Rooms >= ₹7,500: 18% GST
+    - Rooms < Rs.5,000: 5% GST
+    - Rooms Rs.5,000 - Rs.7,499: 12% GST
+    - Rooms >= Rs.7,500: 18% GST
     """
     if room_tariff < 5000:
         return 5.0
@@ -210,7 +210,7 @@ def get_b2b_sales_register(
             gstin = c.guest_gstin.upper()
             
             # Break down invoice by service type and tax rate
-            # Room Services: 12% if < ₹7,500, 18% if >= ₹7,500
+            # Room Services: 12% if < Rs.7,500, 18% if >= Rs.7,500
             room_total = float(c.room_total or 0)
             if room_total > 0:
                 # Calculate nights to get daily rate
@@ -369,7 +369,7 @@ def get_b2c_sales_register(
 ):
     """
     B2C Sales Register - Consolidated bills for customers without GSTIN
-    Returns both B2C Large (Inter-state >₹2.5L, invoice-by-invoice) and B2C Small (grouped by state and tax rate)
+    Returns both B2C Large (Inter-state >Rs.2.5L, invoice-by-invoice) and B2C Small (grouped by state and tax rate)
     Required for GSTR-1 Table 5 (B2C Large) and Table 7 (B2C Small)
     """
     try:
@@ -413,7 +413,7 @@ def get_b2c_sales_register(
 
         checkouts = query.order_by(Checkout.checkout_date).limit(500).all()
 
-        b2c_large = []  # Inter-state invoices > ₹2.5L (invoice-by-invoice)
+        b2c_large = []  # Inter-state invoices > Rs.2.5L (invoice-by-invoice)
         b2c_small = {}  # All other sales (grouped by Place of Supply and Tax Rate)
         
         # TODO: Add guest_state field to Checkout model to determine Place of Supply
@@ -528,7 +528,7 @@ def get_b2c_sales_register(
             # Calculate total taxable value for this invoice
             total_taxable = sum([row["taxable_value"] for row in invoice_rows])
             
-            # B2C Large: Inter-state AND Invoice Value > ₹2.5L
+            # B2C Large: Inter-state AND Invoice Value > Rs.2.5L
             if is_interstate and invoice_value > 250000:
                 # Report invoice-by-invoice (one row per tax rate)
                 for row in invoice_rows:
@@ -580,7 +580,7 @@ def get_b2c_sales_register(
         return {
             "period": {"start_date": start_date, "end_date": end_date},
             "b2c_large": {
-                "description": "Inter-State Invoices > ₹2.5L (Invoice-by-Invoice)",
+                "description": "Inter-State Invoices > Rs.2.5L (Invoice-by-Invoice)",
                 "total_records": len(b2c_large),
                 "total_invoices": len(set([item["invoice_number"] for item in b2c_large])),
                 "data": b2c_large
@@ -2158,9 +2158,9 @@ def get_room_tariff_slab_report(
 ):
     """
     Room Tariff Slab Report - Verify correct tax rate applied
-    Rooms ≤ ₹4,999: 5% GST
-    Rooms ₹5,000 - ₹7,499: 12% GST
-    Rooms ≥ ₹7,500: 18% GST
+    Rooms ≤ Rs.4,999: 5% GST
+    Rooms Rs.5,000 - Rs.7,499: 12% GST
+    Rooms ≥ Rs.7,500: 18% GST
     """
     try:
         # Parse dates
@@ -2223,7 +2223,7 @@ def get_room_tariff_slab_report(
             }
             
             # Debug: Log room data
-            # print(f"Room Tariff Slab: Checkout {c.id}, Date: {c.checkout_date}, Room Total: ₹{room_total}, Tax Rate: {expected_rate}%, Slab: {'5%' if expected_rate == 5.0 else '12%' if expected_rate == 12.0 else '18%'}")
+            # print(f"Room Tariff Slab: Checkout {c.id}, Date: {c.checkout_date}, Room Total: Rs.{room_total}, Tax Rate: {expected_rate}%, Slab: {'5%' if expected_rate == 5.0 else '12%' if expected_rate == 12.0 else '18%'}")
 
             if expected_rate == 5.0:
                 slab_5.append(invoice_data)

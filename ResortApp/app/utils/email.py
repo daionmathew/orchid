@@ -103,7 +103,7 @@ def create_booking_confirmation_email(
     """
     if rooms:
         rooms_html = ''.join([
-            f'<li><strong>Room {room.get("number", "N/A")}</strong> - {room.get("type", "N/A")} - ₹{room.get("price", 0):,.2f}/night</li>'
+            f'<li><strong>Room {room.get("number", "N/A")}</strong> - {room.get("type", "N/A")} - Rs.{room.get("price", 0):,.2f}/night</li>'
             for room in rooms
         ])
     else:
@@ -133,17 +133,17 @@ def create_booking_confirmation_email(
             charges_html += f'<div class="detail-row"><span class="detail-label">Stay Duration:</span><span class="detail-value">{stay_nights} night(s)</span></div>'
         
         if booking_type == 'package' and package_charges:
-            charges_html += f'<div class="detail-row"><span class="detail-label">Package Charges:</span><span class="detail-value">₹{package_charges:,.2f}</span></div>'
+            charges_html += f'<div class="detail-row"><span class="detail-label">Package Charges:</span><span class="detail-value">Rs.{package_charges:,.2f}</span></div>'
         elif room_charges:
-            charges_html += f'<div class="detail-row"><span class="detail-label">Room Charges:</span><span class="detail-value">₹{room_charges:,.2f}</span></div>'
+            charges_html += f'<div class="detail-row"><span class="detail-label">Room Charges:</span><span class="detail-value">Rs.{room_charges:,.2f}</span></div>'
         
         if total_amount:
             # Calculate tax (5%)
             tax = total_amount * 0.05
             grand_total = total_amount + tax
-            charges_html += f'<div class="detail-row"><span class="detail-label">Subtotal:</span><span class="detail-value">₹{total_amount:,.2f}</span></div>'
-            charges_html += f'<div class="detail-row"><span class="detail-label">Tax (5%):</span><span class="detail-value">₹{tax:,.2f}</span></div>'
-            charges_html += f'<div class="detail-row" style="border-top: 2px solid #f59e0b; padding-top: 15px; margin-top: 15px;"><span class="detail-label" style="font-size: 18px;">Grand Total:</span><span class="detail-value" style="font-size: 18px; color: #f59e0b; font-weight: bold;">₹{grand_total:,.2f}</span></div>'
+            charges_html += f'<div class="detail-row"><span class="detail-label">Subtotal:</span><span class="detail-value">Rs.{total_amount:,.2f}</span></div>'
+            charges_html += f'<div class="detail-row"><span class="detail-label">Tax (5%):</span><span class="detail-value">Rs.{tax:,.2f}</span></div>'
+            charges_html += f'<div class="detail-row" style="border-top: 2px solid #f59e0b; padding-top: 15px; margin-top: 15px;"><span class="detail-label" style="font-size: 18px;">Grand Total:</span><span class="detail-value" style="font-size: 18px; color: #f59e0b; font-weight: bold;">Rs.{grand_total:,.2f}</span></div>'
         
         charges_html += '</div>'
     

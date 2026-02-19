@@ -23,7 +23,9 @@ def extract_zip(zip_path, extract_to):
             os.makedirs(destination_dir, exist_ok=True)
             
             # Extract file
-            if not file_info.is_dir():
+            if not file_info.is_dir() and not extract_path.endswith('/'):
+                if os.path.isdir(destination):
+                    continue
                 with zip_ref.open(file_info) as source, open(destination, "wb") as target:
                     shutil.copyfileobj(source, target)
                 print(f"Extracted: {destination}")

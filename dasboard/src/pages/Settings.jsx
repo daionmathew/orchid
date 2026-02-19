@@ -1,13 +1,24 @@
 import React, { useState, useEffect } from "react";
 import DashboardLayout from "../layout/DashboardLayout";
 import api from "../services/api";
-import { Settings as SettingsIcon, FileText, Upload, Trash2, Download, Save } from "lucide-react";
+import { Settings as SettingsIcon, FileText, Upload, Trash2, Download, Save, Globe } from "lucide-react";
+import { formatDateIST } from "../utils/dateUtils";
 
 export default function Settings() {
     const [activeTab, setActiveTab] = useState("system_settings");
 
     // System Settings State
-    const [settings, setSettings] = useState({ gst_number: "" });
+    const [settings, setSettings] = useState({
+        gst_number: "",
+        timezone: "Asia/Kolkata",
+        resort_name: "",
+        resort_address: "",
+        resort_location: "",
+        license_number: "",
+        resort_phone: "",
+        resort_email: "",
+        resort_website: ""
+    });
     const [settingsLoading, setSettingsLoading] = useState(false);
 
     // Legal Documents State
@@ -24,9 +35,9 @@ export default function Settings() {
     const fetchSettings = async () => {
         setSettingsLoading(true);
         try {
-            const res = await api.get("/settings/");
+            const response = await api.get("settings/");
             const settingsMap = {};
-            res.data.forEach(s => { settingsMap[s.key] = s.value; });
+            response.data.forEach(s => { settingsMap[s.key] = s.value; });
             setSettings(prev => ({ ...prev, ...settingsMap }));
         } catch (error) {
             console.error("Error fetching settings:", error);
@@ -35,19 +46,55 @@ export default function Settings() {
         }
     };
 
-    // Save System Settings
-    const handleSaveSettings = async (e) => {
+    // Save Resort Profile Setting
+    const handleSaveProfile = async (e) => {
         e.preventDefault();
         try {
-            await api.post("/settings/", {
+            await Promise.all([
+                api.post("settings/", { key: "resort_name", value: settings.resort_name, description: "Resort Name" }),
+                api.post("settings/", { key: "resort_address", value: settings.resort_address, description: "Resort Address" }),
+                api.post("settings/", { key: "resort_location", value: settings.resort_location, description: "Location Details/Link" }),
+                api.post("settings/", { key: "license_number", value: settings.license_number, description: "License Number" }),
+                api.post("settings/", { key: "resort_phone", value: settings.resort_phone, description: "Resort Contact Phone" }),
+                api.post("settings/", { key: "resort_email", value: settings.resort_email, description: "Resort Contact Email" }),
+                api.post("settings/", { key: "resort_website", value: settings.resort_website, description: "Resort Website" })
+            ]);
+            alert("Resort Profile saved successfully");
+        } catch (error) {
+            console.error("Error saving profile:", error);
+            alert("Failed to save Resort Profile");
+        }
+    };
+
+    // Save GST Setting
+    const handleSaveGst = async (e) => {
+        e.preventDefault();
+        try {
+            await api.post("settings/", {
                 key: "gst_number",
                 value: settings.gst_number,
                 description: "Resort GST Number"
             });
-            alert("Settings saved successfully");
+            alert("GST Number saved successfully");
         } catch (error) {
-            console.error("Error saving settings:", error);
-            alert("Failed to save settings");
+            console.error("Error saving GST:", error);
+            alert("Failed to save GST Number");
+        }
+    };
+
+    // Save Timezone Setting
+    const handleSaveTimezone = async (e) => {
+        e.preventDefault();
+        try {
+            await api.post("settings/", {
+                key: "timezone",
+                value: settings.timezone,
+                description: "System Timezone"
+            });
+            alert("Timezone saved successfully");
+        } catch (error) {
+            console.error("Error saving timezone:", error);
+            alert("Failed to save Timezone");
         }
     };
 
@@ -55,8 +102,8 @@ export default function Settings() {
     const fetchLegalDocuments = async () => {
         setLoadingLegal(true);
         try {
-            const res = await api.get("/legal/");
-            setLegalDocuments(res.data);
+            const response = await api.get("legal/");
+            setLegalDocuments(response.data);
         } catch (error) {
             console.error("Error fetching legal documents:", error);
         } finally {
@@ -78,7 +125,7 @@ export default function Settings() {
         formData.append("description", legalDocForm.description);
 
         try {
-            await api.post("/legal/upload", formData, {
+            await api.post("legal/upload", formData, {
                 headers: { "Content-Type": "multipart/form-data" },
             });
             alert("Document uploaded successfully");
@@ -94,7 +141,7 @@ export default function Settings() {
     const handleDeleteLegalDoc = async (id) => {
         if (!window.confirm("Are you sure you want to delete this document?")) return;
         try {
-            await api.delete(`/legal/${id}`);
+            await api.delete(`legal/${id}`);
             fetchLegalDocuments();
         } catch (error) {
             console.error("Error deleting document:", error);
@@ -129,8 +176,8 @@ export default function Settings() {
                             <button
                                 onClick={() => setActiveTab("system_settings")}
                                 className={`px-6 py-3 font-medium rounded-t-lg transition-colors ${activeTab === "system_settings"
-                                        ? "bg-indigo-600 text-white"
-                                        : "text-gray-600 hover:bg-gray-100"
+                                    ? "bg-indigo-600 text-white"
+                                    : "text-gray-600 hover:bg-gray-100"
                                     }`}
                             >
                                 <SettingsIcon className="inline mr-2" size={18} />
@@ -139,8 +186,8 @@ export default function Settings() {
                             <button
                                 onClick={() => setActiveTab("legal_documents")}
                                 className={`px-6 py-3 font-medium rounded-t-lg transition-colors ${activeTab === "legal_documents"
-                                        ? "bg-indigo-600 text-white"
-                                        : "text-gray-600 hover:bg-gray-100"
+                                    ? "bg-indigo-600 text-white"
+                                    : "text-gray-600 hover:bg-gray-100"
                                     }`}
                             >
                                 <FileText className="inline mr-2" size={18} />
@@ -152,34 +199,174 @@ export default function Settings() {
 
                 {/* System Settings Tab */}
                 {activeTab === "system_settings" && (
-                    <div className="bg-white rounded-lg shadow p-6">
-                        <h2 className="text-xl font-bold mb-4">System Settings</h2>
-                        {settingsLoading ? (
-                            <div className="text-center py-8">Loading settings...</div>
-                        ) : (
-                            <form onSubmit={handleSaveSettings} className="space-y-6">
-                                <div>
-                                    <label className="block text-sm font-medium mb-2">GST Number</label>
-                                    <input
-                                        type="text"
-                                        value={settings.gst_number}
-                                        onChange={(e) => setSettings({ ...settings, gst_number: e.target.value })}
-                                        className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                                        placeholder="Enter GST Number"
-                                    />
-                                    <p className="text-xs text-gray-500 mt-1">
-                                        This GST number will be used in all invoices and reports
-                                    </p>
-                                </div>
-                                <button
-                                    type="submit"
-                                    className="px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-2"
-                                >
-                                    <Save size={18} />
-                                    Save Settings
-                                </button>
-                            </form>
-                        )}
+                    <div className="space-y-6">
+                        {/* Resort Profile Section */}
+                        <div className="bg-white rounded-lg shadow p-6">
+                            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                                <SettingsIcon className="text-indigo-600" size={20} />
+                                Resort Profile
+                            </h2>
+                            {settingsLoading ? (
+                                <div className="text-center py-4">Loading...</div>
+                            ) : (
+                                <form onSubmit={handleSaveProfile} className="space-y-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium mb-2 text-gray-700">Resort Name</label>
+                                            <input
+                                                type="text"
+                                                value={settings.resort_name}
+                                                onChange={(e) => setSettings({ ...settings, resort_name: e.target.value })}
+                                                className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                                placeholder="Enter Resort Name"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-2 text-gray-700">License Number</label>
+                                            <input
+                                                type="text"
+                                                value={settings.license_number}
+                                                onChange={(e) => setSettings({ ...settings, license_number: e.target.value })}
+                                                className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                                placeholder="Enter License Number"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium mb-2 text-gray-700">Contact Phone</label>
+                                            <input
+                                                type="text"
+                                                value={settings.resort_phone}
+                                                onChange={(e) => setSettings({ ...settings, resort_phone: e.target.value })}
+                                                className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                                placeholder="Enter Contact Phone"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-2 text-gray-700">Contact Email</label>
+                                            <input
+                                                type="email"
+                                                value={settings.resort_email}
+                                                onChange={(e) => setSettings({ ...settings, resort_email: e.target.value })}
+                                                className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                                placeholder="Enter Contact Email"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2 text-gray-700">Website / Social Profile</label>
+                                        <input
+                                            type="text"
+                                            value={settings.resort_website}
+                                            onChange={(e) => setSettings({ ...settings, resort_website: e.target.value })}
+                                            className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                            placeholder="Enter Website or Social Link"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2 text-gray-700">Full Address</label>
+                                        <textarea
+                                            value={settings.resort_address}
+                                            onChange={(e) => setSettings({ ...settings, resort_address: e.target.value })}
+                                            className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                            placeholder="Enter Resort Address"
+                                            rows="2"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2 text-gray-700">Location Details / Google Map Link</label>
+                                        <input
+                                            type="text"
+                                            value={settings.resort_location}
+                                            onChange={(e) => setSettings({ ...settings, resort_location: e.target.value })}
+                                            className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                            placeholder="Enter Location Details or Maps URL"
+                                        />
+                                    </div>
+                                    <button
+                                        type="submit"
+                                        className="px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-2 transition-colors"
+                                    >
+                                        <Save size={18} />
+                                        Save Resort Profile
+                                    </button>
+                                </form>
+                            )}
+                        </div>
+
+                        {/* GST Configuration Section */}
+                        <div className="bg-white rounded-lg shadow p-6">
+                            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                                <FileText className="text-indigo-600" size={20} />
+                                GST Configuration
+                            </h2>
+                            {settingsLoading ? (
+                                <div className="text-center py-4">Loading...</div>
+                            ) : (
+                                <form onSubmit={handleSaveGst} className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2 text-gray-700">GST Number</label>
+                                        <input
+                                            type="text"
+                                            value={settings.gst_number}
+                                            onChange={(e) => setSettings({ ...settings, gst_number: e.target.value })}
+                                            className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                            placeholder="Enter GST Number"
+                                        />
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            This GST number will be used in all invoices and reports
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="submit"
+                                        className="px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-2 transition-colors"
+                                    >
+                                        <Save size={18} />
+                                        Save GST Number
+                                    </button>
+                                </form>
+                            )}
+                        </div>
+
+                        {/* Regional Settings Section */}
+                        <div className="bg-white rounded-lg shadow p-6">
+                            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                                <Globe className="text-indigo-600" size={20} />
+                                Regional Settings
+                            </h2>
+                            {settingsLoading ? (
+                                <div className="text-center py-4">Loading...</div>
+                            ) : (
+                                <form onSubmit={handleSaveTimezone} className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2 text-gray-700">System Timezone</label>
+                                        <select
+                                            value={settings.timezone}
+                                            onChange={(e) => setSettings({ ...settings, timezone: e.target.value })}
+                                            className="w-full border rounded px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+                                        >
+                                            <option value="Asia/Kolkata">Indian Standard Time (IST - Asia/Kolkata)</option>
+                                            <option value="UTC">Coordinated Universal Time (UTC)</option>
+                                            <option value="America/New_York">Eastern Time (US & Canada)</option>
+                                            <option value="Europe/London">London / GMT</option>
+                                            <option value="Asia/Dubai">Dubai / Gulf Standard Time</option>
+                                            <option value="Asia/Singapore">Singapore / Hong Kong</option>
+                                        </select>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            This will be the default timezone for all date and time displays across the application.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="submit"
+                                        className="px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-2 transition-colors"
+                                    >
+                                        <Save size={18} />
+                                        Save Timezone
+                                    </button>
+                                </form>
+                            )}
+                        </div>
                     </div>
                 )}
 
@@ -277,7 +464,7 @@ export default function Settings() {
                                                     </td>
                                                     <td className="px-4 py-3 text-sm text-gray-600">{doc.description || "-"}</td>
                                                     <td className="px-4 py-3 text-sm text-gray-600">
-                                                        {new Date(doc.uploaded_at).toLocaleDateString()}
+                                                        {formatDateIST(doc.uploaded_at)}
                                                     </td>
                                                     <td className="px-4 py-3 text-sm">
                                                         <div className="flex gap-2">

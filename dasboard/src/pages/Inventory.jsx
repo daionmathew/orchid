@@ -541,7 +541,7 @@ function TransactionDetailsModal({
   const getTypeInfo = () => {
     if (transaction.transaction_type === "in") {
       return { label: "Purchase (In)", color: "bg-green-100 text-green-800" };
-    } else if (transaction.transaction_type === "transfer_in") {
+    } else if (transaction.transaction_type === "transfer_in" || transaction.transaction_type === "Stock Received") {
       // Extract source location from notes if available
       let label = "Stock Received";
       if (transaction.notes && transaction.notes.includes("from")) {
@@ -830,7 +830,8 @@ const Inventory = () => {
     setLoadingMoreAssets(true);
     try {
       const skip = page * assetsPerPage;
-      const res = await API.get(`/inventory/asset-mappings?skip=${skip}&limit=${assetsPerPage}`);
+      // Only fetch fixed assets (is_fixed_asset=true)
+      const res = await API.get(`/inventory/asset-mappings?skip=${skip}&limit=${assetsPerPage}&is_fixed_asset=true`);
       const newData = res.data || [];
 
       if (reset) {
@@ -1267,6 +1268,12 @@ const Inventory = () => {
         setLocations(res.data || []);
       } else if (activeTab === "assets") {
         fetchAssetMappings(0, true);
+        // Also fetch metadata needed for the assignment form
+        Promise.all([
+          API.get("/inventory/items?limit=1000&is_fixed_asset=true").then(res => setItems(res.data || [])),
+          API.get("/inventory/locations?limit=1000").then(res => setLocations(res.data || [])),
+          API.get("/inventory/categories?limit=1000").then(res => setCategories(res.data || []))
+        ]).catch(err => console.error("Failed to fetch asset metadata:", err));
       } else if (activeTab === "laundry") {
         fetchLaundryLogs();
       } else if (activeTab === "location-stock") {
@@ -4482,7 +4489,7 @@ const SmartTransactionsTab = ({
         color: "text-green-600 bg-green-50",
         statusColor: "bg-green-500",
       };
-    } else if (trans.transaction_type === "transfer_in") {
+    } else if (trans.transaction_type === "transfer_in" || trans.transaction_type === "Stock Received") {
       return {
         icon: <ArrowDownCircle className="w-4 h-4" />,
         label: "Stock Received",
@@ -4827,7 +4834,7 @@ const SmartTransactionsTab = ({
                 filteredTransactions.map((trans) => {
                   const typeInfo = getTransactionTypeInfo(trans);
                   const itemDetails = getItemDetails(trans.item_id);
-                  const isPositive = trans.transaction_type === "in" || trans.transaction_type === "transfer_in";
+                  const isPositive = trans.transaction_type === "in" || trans.transaction_type === "transfer_in" || trans.transaction_type === "Stock Received";
 
                   return (
                     <tr key={trans.id} className="hover:bg-gray-50">
@@ -4861,6 +4868,19 @@ const SmartTransactionsTab = ({
                           {typeInfo.icon}
                           {typeInfo.label}
                         </div>
+
+                        {/* Locations Sub-text */}
+                        {(trans.source_location_name || trans.destination_location_name) && (
+                          <div className="text-[10px] text-gray-500 mt-1 flex flex-wrap gap-x-1 gap-y-0.5 leading-tight opacity-80">
+                            {trans.source_location_name && (
+                              <span>From: <span className="text-gray-700 font-medium italic">{trans.source_location_name}</span></span>
+                            )}
+                            {trans.source_location_name && trans.destination_location_name && <span className="text-gray-300">|</span>}
+                            {trans.destination_location_name && (
+                              <span>To: <span className="text-gray-700 font-medium italic">{trans.destination_location_name}</span></span>
+                            )}
+                          </div>
+                        )}
                         {trans.reference_number && (
                           <div className="text-xs text-gray-500 mt-1">
                             {trans.transaction_type === "in" && "Vendor: "}
@@ -6690,46 +6710,46 @@ function PurchaseFormModal({
 
             {/* Items Grid */}
             <div className="overflow-x-auto border-2 border-indigo-200 rounded-lg">
-              <table className="w-full">
-                <thead className="bg-indigo-50">
+              <table className="w-full min-w-[1400px]">
+                <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                   <tr>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
-                      Action
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider w-16">
+                      <span className="sr-only">Action</span>
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
-                      Item Name
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider min-w-[250px]">
+                      Item Name <span className="text-red-500">*</span>
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider min-w-[140px]">
                       Category
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
-                      HSN Code
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider w-28">
+                      HSN
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider w-24">
                       Unit
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider min-w-[140px]">
                       Serial/Batch
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
-                      Expiry Date
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider min-w-[140px]">
+                      Expiry
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
-                      Quantity
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider w-32 min-w-[120px]">
+                      Qty <span className="text-red-500">*</span>
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
-                      Unit Price
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider w-40 min-w-[160px]">
+                      Unit Price <span className="text-red-500">*</span>
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
+                    <th className="px-4 py-3 text-center text-sm font-bold text-gray-700 uppercase tracking-wider w-20 min-w-[80px]">
                       Tax Inc?
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
+                    <th className="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider w-24 min-w-[100px]">
                       GST %
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
+                    <th className="px-4 py-3 text-right text-sm font-bold text-gray-700 uppercase tracking-wider w-32 min-w-[120px]">
                       Tax Amt
                     </th>
-                    <th className="px-3 py-3 text-left text-sm font-semibold text-indigo-900">
+                    <th className="px-4 py-3 text-right text-sm font-bold text-gray-700 uppercase tracking-wider w-40 min-w-[160px]">
                       Net Total
                     </th>
                   </tr>
@@ -6750,25 +6770,25 @@ function PurchaseFormModal({
                     return (
                       <tr
                         key={index}
-                        className="border-b border-gray-200 hover:bg-gray-50"
+                        className={`transition-colors duration-150 ${index % 2 === 0 ? "bg-white" : "bg-gray-50"} hover:bg-indigo-50`}
                       >
-                        <td className="px-2 py-2">
+                        <td className="px-4 py-3 align-middle text-center">
                           <button
                             type="button"
                             onClick={() => onRemoveDetail(index)}
-                            className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                            className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-100 rounded-lg transition-colors"
                             title="Remove Item"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </td>
-                        <td className="px-3 py-3">
+                        <td className="px-4 py-3 align-middle">
                           <select
                             value={detail.item_id}
                             onChange={(e) =>
                               handleItemSelect(index, e.target.value)
                             }
-                            className="w-full px-3 py-2 text-sm font-semibold border-2 border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-sm"
                             required
                           >
                             <option value="">Select Item</option>
@@ -6779,34 +6799,22 @@ function PurchaseFormModal({
                             ))}
                           </select>
                         </td>
-                        <td className="px-2 py-2">
-                          <input
-                            type="text"
-                            value={detail.category || ""}
-                            readOnly
-                            className="w-full px-2 py-1 text-xs border border-gray-200 bg-gray-50 rounded text-gray-600"
-                            placeholder="Auto-filled"
-                          />
+                        <td className="px-4 py-3 align-middle">
+                          <div className="px-3 py-2 text-sm bg-gray-100 text-gray-600 rounded-md border border-gray-200 truncate" title={detail.category}>
+                            {detail.category || "-"}
+                          </div>
                         </td>
-                        <td className="px-2 py-2">
-                          <input
-                            type="text"
-                            value={detail.hsn_code || ""}
-                            readOnly
-                            className="w-full px-2 py-1 text-xs border border-gray-200 bg-gray-50 rounded text-gray-600"
-                            placeholder="Auto-filled"
-                          />
+                        <td className="px-4 py-3 align-middle">
+                          <div className="px-3 py-2 text-sm bg-gray-100 text-gray-600 rounded-md border border-gray-200 truncate">
+                            {detail.hsn_code || "-"}
+                          </div>
                         </td>
-                        <td className="px-2 py-2">
-                          <input
-                            type="text"
-                            value={detail.unit || ""}
-                            readOnly
-                            className="w-full px-2 py-1 text-xs border border-gray-200 bg-gray-50 rounded text-gray-600"
-                            placeholder="Auto-filled"
-                          />
+                        <td className="px-4 py-3 align-middle">
+                          <div className="px-3 py-2 text-sm bg-gray-100 text-gray-600 rounded-md border border-gray-200 text-center">
+                            {detail.unit || "-"}
+                          </div>
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-4 py-3 align-middle">
                           {showSerialBatch ? (
                             <input
                               type="text"
@@ -6818,14 +6826,14 @@ function PurchaseFormModal({
                                   e.target.value,
                                 )
                               }
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500"
-                              placeholder="Serial/Batch"
+                              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-sm"
+                              placeholder="S/N"
                             />
                           ) : (
-                            <span className="text-gray-400 text-xs">-</span>
+                            <div className="text-center text-gray-400">-</div>
                           )}
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-4 py-3 align-middle">
                           {showExpiryDate ? (
                             <input
                               type="date"
@@ -6837,13 +6845,13 @@ function PurchaseFormModal({
                                   e.target.value,
                                 )
                               }
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500"
+                              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-sm"
                             />
                           ) : (
-                            <span className="text-gray-400 text-xs">-</span>
+                            <div className="text-center text-gray-400">-</div>
                           )}
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-4 py-3 align-middle">
                           <input
                             type="number"
                             step="any"
@@ -6856,28 +6864,31 @@ function PurchaseFormModal({
                                 e.target.value,
                               )
                             }
-                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500"
+                            className="w-full px-3 py-2 text-sm font-medium border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-sm text-right"
                             required
                           />
                         </td>
-                        <td className="px-2 py-2">
-                          <input
-                            type="number"
-                            step="any"
-                            min="0"
-                            value={detail.unit_price}
-                            onChange={(e) =>
-                              updateDetail(
-                                index,
-                                "unit_price",
-                                e.target.value,
-                              )
-                            }
-                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500"
-                            required
-                          />
+                        <td className="px-4 py-3 align-middle">
+                          <div className="relative">
+                            <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs">₹</span>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              value={detail.unit_price}
+                              onChange={(e) =>
+                                updateDetail(
+                                  index,
+                                  "unit_price",
+                                  e.target.value,
+                                )
+                              }
+                              className="w-full pl-6 pr-3 py-2 text-sm font-medium border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-sm text-right"
+                              required
+                            />
+                          </div>
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-4 py-3 align-middle text-center">
                           <input
                             type="checkbox"
                             checked={detail.tax_inclusive || false}
@@ -6888,11 +6899,11 @@ function PurchaseFormModal({
                                 e.target.checked,
                               )
                             }
-                            className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                            className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer"
                             title="Tax Inclusive"
                           />
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-4 py-3 align-middle">
                           <input
                             type="number"
                             step="0.01"
@@ -6906,16 +6917,16 @@ function PurchaseFormModal({
                                 parseFloat(e.target.value) || 0,
                               )
                             }
-                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500"
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-sm text-right"
                           />
                         </td>
-                        <td className="px-2 py-2">
-                          <span className="text-xs font-medium text-gray-700">
+                        <td className="px-4 py-3 align-middle text-right">
+                          <span className="text-sm font-medium text-gray-600 block min-w-[80px]">
                             {formatCurrency(taxAmount)}
                           </span>
                         </td>
-                        <td className="px-2 py-2">
-                          <span className="text-xs font-semibold text-indigo-600">
+                        <td className="px-4 py-3 align-middle text-right">
+                          <span className="text-sm font-bold text-indigo-700 block min-w-[100px]">
                             {formatCurrency(netTotal)}
                           </span>
                         </td>
@@ -7705,29 +7716,62 @@ function IssueFormModal({
               </label>
               <select
                 value={form.requisition_id}
-                onChange={(e) => {
+                onChange={async (e) => {
                   const reqId = e.target.value;
-                  let newDetails = form.details;
+                  // First update the ID immediately
+                  setForm(prev => ({ ...prev, requisition_id: reqId }));
 
-                  if (reqId) {
-                    const selectedReq = requisitions.find(r => r.id === parseInt(reqId));
-                    if (selectedReq?.details) {
+                  if (!reqId) return;
+
+                  try {
+                    let selectedReq = requisitions.find(r => r.id === parseInt(reqId));
+                    if (!selectedReq) return;
+
+                    let newDetails = [];
+                    let destinationLocationId = null;
+
+                    // Fetch full details if missing from list
+                    if (!selectedReq.details || selectedReq.details.length === 0) {
+                      try {
+                        const res = await API.get(`/inventory/requisitions/${reqId}`);
+                        if (res.data) selectedReq = { ...selectedReq, ...res.data };
+                      } catch (err) {
+                        console.error("Failed to fetch requisition details", err);
+                      }
+                    }
+
+                    // Auto-select destination location
+                    if (selectedReq.destination_location_id) {
+                      destinationLocationId = selectedReq.destination_location_id;
+                    } else if (selectedReq.destination_department) {
+                      const matchingLoc = locations.find(l =>
+                        l.name.toLowerCase() === selectedReq.destination_department.toLowerCase() ||
+                        (l.building && l.building.toLowerCase().includes(selectedReq.destination_department.toLowerCase()))
+                      );
+                      if (matchingLoc) destinationLocationId = matchingLoc.id;
+                    }
+
+                    // Auto-populate items
+                    if (selectedReq.details) {
                       newDetails = selectedReq.details.map(detail => ({
                         item_id: detail.item_id,
-                        issued_quantity: detail.requested_quantity || detail.approved_quantity,
+                        issued_quantity: detail.approved_quantity || detail.requested_quantity,
                         unit: detail.unit,
                         cost: items.find(i => i.id === detail.item_id)?.last_purchase_price || items.find(i => i.id === detail.item_id)?.unit_price || 0,
                         notes: `From ${selectedReq.requisition_number}`,
                         batch_lot_number: "",
                       }));
                     }
-                  }
 
-                  setForm({
-                    ...form,
-                    requisition_id: reqId,
-                    details: newDetails.length > 0 ? newDetails : form.details
-                  });
+                    setForm(prev => ({
+                      ...prev,
+                      destination_location_id: destinationLocationId || prev.destination_location_id,
+                      details: newDetails.length > 0 ? newDetails : prev.details
+                    }));
+
+                  } catch (err) {
+                    console.error("Error in requisition selection:", err);
+                  }
                 }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
               >
@@ -8768,7 +8812,7 @@ function AssetMappingFormModal({
   // Filter items to show only fixed assets
   const fixedAssets = items.filter((item) => {
     const category = categories.find((c) => c.id === item.category_id);
-    return category?.is_asset_fixed || false;
+    return item.is_asset_fixed || category?.is_asset_fixed || false;
   });
 
   // Fetch detailed location stocks
@@ -8823,7 +8867,10 @@ function AssetMappingFormModal({
       // If we have both an item and a specific location selected
       if (itemId && sourceId) {
         const stock = getStockForLocation(itemId, sourceId);
-        if (stock <= 0) {
+
+        // Only alert if manually selecting a source that has no stock
+        // If field is item_id, we are about to auto-select, so we don't need to alert yet
+        if (field === "source_location_id" && stock <= 0) {
           alert("Item is not available at selected location");
           return; // Do not proceed
         }
@@ -8832,6 +8879,24 @@ function AssetMappingFormModal({
 
     const newAssets = [...(form.assets || [])];
     newAssets[index] = { ...newAssets[index], [field]: value };
+
+    // Auto-select highest stock location when item changes
+    if (field === "item_id") {
+      const validSourceIds = locations.filter(l => l.is_inventory_point).map(l => l.id);
+      const itemStocks = detailedStocks.filter(s =>
+        s.item_id == value && validSourceIds.includes(s.location_id)
+      );
+
+      if (itemStocks.length > 0) {
+        // Sort by quantity descending
+        itemStocks.sort((a, b) => b.quantity - a.quantity);
+        // Set the source location to the one with highest stock
+        if (itemStocks[0].quantity > 0) {
+          newAssets[index].source_location_id = itemStocks[0].location_id;
+        }
+      }
+    }
+
     setForm({ ...form, assets: newAssets });
   };
 
@@ -8916,7 +8981,7 @@ function AssetMappingFormModal({
                         const stock = getStockForLocation(item.id, asset.source_location_id);
                         return (
                           <option key={item.id} value={item.id} disabled={stock <= 0}>
-                            {item.name} ({asset.source_location_id ? "Location" : "Global"} Stock: {stock})
+                            {item.name}
                           </option>
                         );
                       })}
@@ -8935,11 +9000,7 @@ function AssetMappingFormModal({
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm"
                       disabled={isEditing}
                     >
-                      <option value="">Default (Global) {(() => {
-                        if (!asset.item_id) return "";
-                        // For Default/Global, show Main Warehouse/Global stock
-                        return `(Stock: ${getStockForLocation(asset.item_id, null)})`;
-                      })()}</option>
+                      <option value="">Select Source</option>
                       {locations
                         .filter((loc) => loc.is_inventory_point)
                         .map((loc) => (
@@ -8951,35 +9012,7 @@ function AssetMappingFormModal({
                     </select>
                   </div>
 
-                  <div className="w-full sm:w-24">
-                    <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                      Qty
-                    </label>
-                    {(() => {
-                      const selectedItem = items.find(i => i.id == asset.item_id);
-                      const currentSourceId = asset.source_location_id;
-                      // Fallback: if no source selected, assume warehouse for display ONLY IF we found one, else global might be misleading if we want specific source.
-                      // Actually, for "Available" display, if source is empty, we show Global as per previous logic, or Warehouse stock?
-                      // Let's stick to Global for Default to be consistent with dropdown label "Default"
-                      const displayStock = getStockForLocation(asset.item_id, currentSourceId);
 
-                      return (
-                        <div>
-                          <input
-                            type="number"
-                            value={asset.quantity || 1}
-                            readOnly
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed text-sm font-medium"
-                          />
-                          {selectedItem && (
-                            <span className="text-[10px] text-gray-500 block mt-1">
-                              Available ({currentSourceId ? "Location" : "Global"}): {displayStock}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </div>
 
                   <div className="w-full sm:w-48">
                     <label className="block text-xs font-semibold text-gray-600 mb-1.5">
@@ -9998,7 +10031,7 @@ function RecipeFormModal({
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Prep Time (minutes)
+                Prep Time (minutes) *
               </label>
               <input
                 type="number"
@@ -10013,11 +10046,12 @@ function RecipeFormModal({
                 }
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
                 min="0"
+                required
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Cook Time (minutes)
+                Cook Time (minutes) *
               </label>
               <input
                 type="number"
@@ -10032,6 +10066,7 @@ function RecipeFormModal({
                 }
                 className="w-full border border-gray-300 rounded-lg px-3 py-2"
                 min="0"
+                required
               />
             </div>
           </div>

@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/room_provider.dart';
+import '../providers/package_provider.dart';
 import '../providers/booking_provider.dart';
 import '../models/room.dart';
 import '../models/booking.dart';
+import '../models/package.dart';
 import 'room_history_screen.dart';
+import 'package_detail_screen.dart';
 import '../config/constants.dart';
 
 class RoomListScreen extends StatefulWidget {
@@ -22,11 +25,12 @@ class _RoomListScreenState extends State<RoomListScreen> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    // Tabs: All, Vacant, Occupied, Clean, Dirty, Maintenance
-    _tabController = TabController(length: 6, vsync: this);
+    // Tabs: All, Vacant, Occupied, Clean, Dirty, Maintenance, Packages
+    _tabController = TabController(length: 7, vsync: this);
     Future.microtask(() {
       Provider.of<RoomProvider>(context, listen: false).fetchRooms();
       Provider.of<BookingProvider>(context, listen: false).fetchBookings();
+      Provider.of<PackageProvider>(context, listen: false).fetchPackages();
     });
   }
 
@@ -103,6 +107,9 @@ class _RoomListScreenState extends State<RoomListScreen> with SingleTickerProvid
   Widget build(BuildContext context) {
     final roomProvider = Provider.of<RoomProvider>(context);
     final bookingProvider = Provider.of<BookingProvider>(context);
+    final packageProvider = Provider.of<PackageProvider>(context);
+
+    bool isPackageTab = _tabController.index == 6;
 
     // KPI Calc
     final total = roomProvider.rooms.length;
@@ -137,6 +144,7 @@ class _RoomListScreenState extends State<RoomListScreen> with SingleTickerProvid
             Tab(text: 'Clean'),
             Tab(text: 'Dirty'),
             Tab(text: 'Maint.'),
+            Tab(text: 'Packages'),
           ],
         ),
       ),
@@ -182,12 +190,17 @@ class _RoomListScreenState extends State<RoomListScreen> with SingleTickerProvid
                 crossAxisSpacing: 16,
                 mainAxisSpacing: 16,
               ),
-              itemCount: _filterRooms(roomProvider.rooms, _tabController.index, _searchController.text).length,
+              itemCount: isPackageTab 
+                  ? packageProvider.packages.length 
+                  : _filterRooms(roomProvider.rooms, _tabController.index, _searchController.text).length,
               itemBuilder: (context, index) {
-                final room = _filterRooms(roomProvider.rooms, _tabController.index, _searchController.text)[index];
-                final activeBooking = _findActiveBooking(room.roomNumber, bookingProvider.bookings);
-                
-                return _buildRoomCard(room, activeBooking);
+                if (isPackageTab) {
+                    return _buildPackageCard(packageProvider.packages[index]);
+                } else {
+                    final room = _filterRooms(roomProvider.rooms, _tabController.index, _searchController.text)[index];
+                    final activeBooking = _findActiveBooking(room.roomNumber, bookingProvider.bookings);
+                    return _buildRoomCard(room, activeBooking);
+                }
               },
             ),
           ),
@@ -319,7 +332,7 @@ class _RoomListScreenState extends State<RoomListScreen> with SingleTickerProvid
                           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                         ),
                         Text(
-                          '\$${room.price.toStringAsFixed(0)}',
+                          '₹${room.price.toStringAsFixed(0)}',
                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blueGrey),
                         ),
                       ],
@@ -389,5 +402,53 @@ class _RoomListScreenState extends State<RoomListScreen> with SingleTickerProvid
   
   Widget _buildFeatureIcon(IconData icon) {
      return Icon(icon, size: 14, color: Colors.grey[600]);
+  }
+
+  Widget _buildPackageCard(Package package) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        onTap: () {
+           // Details Screen
+           Navigator.push(context, MaterialPageRoute(builder: (_) => PackageDetailScreen(package: package)));
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 100,
+              width: double.infinity,
+              color: Colors.purple.shade50,
+              child: package.imageUrls.isNotEmpty 
+                  ? Image.network(_getImageUrl(package.imageUrls[0]), fit: BoxFit.cover, errorBuilder: (_,__,___) => const Icon(Icons.broken_image))
+                  : const Icon(Icons.redeem, size: 40, color: Colors.purple),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(package.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 4),
+                    Text(package.description ?? '', style: TextStyle(fontSize: 12, color: Colors.grey[600]), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    const Spacer(),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                         Chip(label: Text("${package.maxStayDays} Days"), labelStyle: const TextStyle(fontSize: 10), padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
+                         Text('₹${package.price.toStringAsFixed(0)}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                      ],
+                    )
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

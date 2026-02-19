@@ -361,6 +361,7 @@ def _list_services_impl(db: Session, skip: int = 0, limit: int = 20):
                     "description": str(service.description) if service.description else None,
                     "charges": float(service.charges),
                     "is_visible_to_guest": bool(service.is_visible_to_guest if hasattr(service, 'is_visible_to_guest') else False),
+                    "average_completion_time": getattr(service, 'average_completion_time', None),
                     "created_at": service.created_at,  # Keep as datetime for Pydantic
                     "images": images_list,
                     "inventory_items": []
@@ -443,6 +444,7 @@ def _list_services_impl(db: Session, skip: int = 0, limit: int = 20):
                         "description": str(service.description) if service.description else None,
                         "charges": float(service.charges),
                         "is_visible_to_guest": bool(service.is_visible_to_guest if hasattr(service, 'is_visible_to_guest') else False),
+                        "average_completion_time": getattr(service, 'average_completion_time', None),
                         "created_at": service.created_at,
                         "images": [{"id": int(img.id), "image_url": str(img.image_url)} for img in (service.images if service.images else [])],
                         "inventory_items": []
@@ -526,6 +528,7 @@ def list_services(db: Session = Depends(get_db), current_user: User = Depends(ge
                     "description": str(service.description) if service.description else None,
                     "charges": float(service.charges),
                     "is_visible_to_guest": bool(getattr(service, 'is_visible_to_guest', False)),
+                    "average_completion_time": getattr(service, 'average_completion_time', None),
                     "created_at": service.created_at,  # Keep as datetime object
                     "images": [{"id": int(img.id), "image_url": str(img.image_url)} for img in (service.images or [])],
                     "inventory_items": inventory_items_list
@@ -621,6 +624,7 @@ def assign_service(
                 "description": result.service.description if result.service else None,
                 "charges": result.service.charges if result.service else 0,
                 "is_visible_to_guest": result.service.is_visible_to_guest if result.service else False,
+                "average_completion_time": getattr(result.service, 'average_completion_time', None) if result.service else None,
                 "created_at": result.service.created_at.isoformat() if result.service and result.service.created_at else None,
                 "images": [],
                 "inventory_items": []
@@ -663,7 +667,10 @@ def get_all_assigned_services(
     skip: int = 0, 
     limit: int = 20,
     employee_id: Optional[int] = None,
-    status: Optional[str] = None
+    status: Optional[str] = None,
+    room_id: Optional[int] = None,
+    booking_id: Optional[int] = None,
+    package_booking_id: Optional[int] = None
 ):
     try:
         # Cap limit to prevent performance issues
@@ -672,7 +679,7 @@ def get_all_assigned_services(
             limit = 200
         if limit < 1:
             limit = 50
-        assigned_services = service_crud.get_assigned_services(db, skip=skip, limit=limit, employee_id=employee_id, status=status)
+        assigned_services = service_crud.get_assigned_services(db, skip=skip, limit=limit, employee_id=employee_id, status=status, room_id=room_id, booking_id=booking_id, package_booking_id=package_booking_id)
         
         # Manually construct response to ensure proper serialization
         result = []
@@ -713,8 +720,17 @@ def get_all_assigned_services(
                                 "item_code": getattr(inv_item, 'item_code', None),
                                 "unit": getattr(inv_item, 'unit', 'pcs') or 'pcs',
                                 "quantity": float(eia.quantity_assigned),
+                                "quantity_assigned": float(eia.quantity_assigned),
+                                "quantity_returned": float(eia.quantity_returned or 0.0),
                                 "unit_price": float(inv_item.unit_price) if inv_item.unit_price is not None else 0.0,
-                                "selling_price": float(inv_item.selling_price) if hasattr(inv_item, 'selling_price') and inv_item.selling_price is not None else None
+                                "selling_price": float(inv_item.selling_price) if hasattr(inv_item, 'selling_price') and inv_item.selling_price is not None else None,
+                                "assignment_id": int(eia.id),
+                                "item": {
+                                    "id": int(inv_item.id),
+                                    "name": str(inv_item.name),
+                                    "unit": getattr(inv_item, 'unit', 'pcs') or 'pcs',
+                                    "item_code": getattr(inv_item, 'item_code', None)
+                                }
                             })
                     print(f"[DEBUG] Constructed {len(items_used_list)} items_used_list entries")
             except Exception as e:
@@ -740,6 +756,7 @@ def get_all_assigned_services(
                     "description": assigned.service.description,
                     "charges": assigned.service.charges,
                     "is_visible_to_guest": assigned.service.is_visible_to_guest if hasattr(assigned.service, 'is_visible_to_guest') else False,
+                    "average_completion_time": getattr(assigned.service, 'average_completion_time', None),
                     "created_at": assigned.service.created_at,
                     "images": [{"id": img.id, "image_url": img.image_url} for img in assigned.service.images] if hasattr(assigned.service, 'images') else [],
                     "inventory_items": service_inventory_items
@@ -753,6 +770,8 @@ def get_all_assigned_services(
                     "number": assigned.room.number
                 },
                 "assigned_at": assigned.assigned_at,
+                "started_at": assigned.started_at,
+                "completed_at": assigned.completed_at,
                 "status": status_enum,
                 "last_used_at": assigned.last_used_at,
                 "inventory_items_used": items_used_list,

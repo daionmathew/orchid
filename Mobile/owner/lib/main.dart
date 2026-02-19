@@ -12,6 +12,7 @@ import 'providers/expense_provider.dart';
 import 'providers/food_provider.dart';
 import 'providers/activity_provider.dart';
 import 'providers/service_provider.dart';
+import 'providers/package_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 
@@ -41,6 +42,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => FoodProvider(apiService)),
         ChangeNotifierProvider(create: (_) => ActivityProvider(apiService)),
         ChangeNotifierProvider(create: (_) => ServiceProvider(apiService)),
+        ChangeNotifierProvider(create: (_) => PackageProvider(apiService)),
       ],
       child: MaterialApp(
         title: 'Orchid Resort',

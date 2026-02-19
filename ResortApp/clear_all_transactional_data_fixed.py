@@ -37,11 +37,11 @@ def clear_all_transactional_data():
         print("  ✅ Services (definitions)")
         
         print("\n" + "=" * 70)
-        response = input("Are you SURE you want to proceed? (type 'YES' to confirm): ")
+        # response = input("Are you SURE you want to proceed? (type 'YES' to confirm): ")
         
-        if response != "YES":
-            print("\n❌ Cleanup cancelled.")
-            return
+        # if response != "YES":
+        #     print("\n❌ Cleanup cancelled.")
+        #     return
         
         print("\n" + "=" * 70)
         print("STARTING CLEANUP...")

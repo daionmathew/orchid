@@ -17,6 +17,8 @@ from fastapi.responses import FileResponse
 import os
 import shutil
 import uuid
+from app.curd import foodorder as crud_food_order
+from app.schemas.foodorder import FoodOrderCreate, FoodOrderItemCreate
 
 UPLOAD_DIR = "uploads/checkin_proofs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -262,15 +264,8 @@ def _fetch_services(db: Session, room_ids: List[int], check_in, check_out):
         "assigned_at": s.assigned_at
     } for s in services]
 
-def _fetch_inventory(db: Session, room_ids: List[int], check_in, check_out):
-    if not room_ids:
-        return []
-        
-    # Get location IDs for these rooms
-    rooms = db.query(Room).filter(Room.id.in_(room_ids)).all()
-    location_ids = [r.inventory_location_id for r in rooms if r.inventory_location_id]
-    
-    if not location_ids:
+def _fetch_inventory(db: Session, room_ids: List[int], check_in, check_out, booking_id: Optional[int] = None):
+    if not room_ids and not booking_id:
         return []
         
     # Fetch stock issues
@@ -278,26 +273,67 @@ def _fetch_inventory(db: Session, room_ids: List[int], check_in, check_out):
         db.query(StockIssueDetail)
         .join(StockIssue)
         .join(InventoryItem)
-        .filter(StockIssue.destination_location_id.in_(location_ids))
-        .filter(StockIssue.issue_date >= check_in)
-        .options(joinedload(StockIssueDetail.item).joinedload(InventoryItem.category))
     )
-    if check_out:
-        query = query.filter(func.date(StockIssue.issue_date) <= check_out)
+    
+    if booking_id:
+        # If we have booking_id, it is the most reliable filter
+        query = query.filter(StockIssue.booking_id == booking_id)
+    else:
+        # Fallback to room + date logic for legacy data or if booking_id not linked
+        rooms = db.query(Room).filter(Room.id.in_(room_ids)).all()
+        location_ids = [r.inventory_location_id for r in rooms if r.inventory_location_id]
+        if not location_ids:
+            return []
+        query = query.filter(StockIssue.destination_location_id.in_(location_ids))
+        query = query.filter(StockIssue.issue_date >= check_in)
+        if check_out:
+            query = query.filter(func.date(StockIssue.issue_date) <= check_out)
+
+    query = query.options(joinedload(StockIssueDetail.item).joinedload(InventoryItem.category))
         
     details = query.all()
     
-    return [{
-        "item_name": d.item.name if d.item else "Unknown",
-        "quantity": d.issued_quantity,
-        "unit": d.unit,
-        "category": d.item.category.name if d.item and d.item.category else None,
-        "issued_at": d.issue.issue_date,
-        "is_payable": d.is_payable or False,
-        "unit_price": d.unit_price or 0.0,
-        "is_damaged": d.is_damaged or False,
-        "notes": d.damage_notes if d.is_damaged else d.notes
-    } for d in details]
+    # Aggregation Logic to prevent duplicates
+    aggregated = {}
+    
+    for d in details:
+        # Create a unique key for grouping
+        # We group by Item ID ONLY.
+        # This merges "Payable" and "Complimentary" entries for the same item.
+        key = d.item_id
+        
+        if key not in aggregated:
+            aggregated[key] = {
+                "item_name": d.item.name if d.item else "Unknown",
+                "quantity": 0.0,
+                "complimentary_qty": 0.0, # Added for detailed split
+                "payable_qty": 0.0,       # Added for detailed split
+                "unit": d.unit,
+                "category": d.item.category.name if d.item and d.item.category else None,
+                "issued_at": d.issue.issue_date, # Use the first date found
+                "is_payable": False, # Will determine based on content
+                "unit_price": d.unit_price or 0.0,
+                "is_damaged": d.is_damaged or False,
+                "notes": d.damage_notes if d.is_damaged else d.notes
+            }
+        
+        # Sum quantities
+        qty = (d.issued_quantity or 0)
+        aggregated[key]["quantity"] += qty
+        
+        if d.is_payable:
+            aggregated[key]["payable_qty"] += qty
+            aggregated[key]["is_payable"] = True # Mark as having payable component
+        else:
+            aggregated[key]["complimentary_qty"] += qty
+
+        # Updates: If current item is damaged, mark aggregate as damaged
+        if d.is_damaged:
+            aggregated[key]["is_damaged"] = True
+            if d.damage_notes and not aggregated[key]["notes"]:
+                aggregated[key]["notes"] = d.damage_notes
+
+    return list(aggregated.values())
 
 # ----------------------------------------------------------------
 # GET Detailed view for a SINGLE booking (regular or package)
@@ -338,6 +374,7 @@ def get_booking_details(booking_id: Union[str, int], is_package: bool, db: Sessi
                  if checkout_rec: total_amt = checkout_rec.grand_total
 
             room_ids = [r.room_id for r in booking.rooms if r.room_id]
+            start_filter = booking.checked_in_at or booking.check_in
             
             return BookingOut(
                 id=booking.id,
@@ -355,9 +392,9 @@ def get_booking_details(booking_id: Union[str, int], is_package: bool, db: Sessi
                 is_package=True,
                 total_amount=total_amt,
                 rooms=[pbr.room for pbr in booking.rooms if pbr.room],
-                food_orders=_fetch_extras(db, room_ids, booking.check_in, booking.check_out),
-                service_requests=_fetch_services(db, room_ids, booking.check_in, booking.check_out),
-                inventory_usage=_fetch_inventory(db, room_ids, booking.check_in, booking.check_out)
+                food_orders=_fetch_extras(db, room_ids, start_filter, booking.check_out),
+                service_requests=_fetch_services(db, room_ids, start_filter, booking.check_out),
+                inventory_usage=_fetch_inventory(db, room_ids, start_filter, booking.check_out, booking_id=booking.id)
             )
         else: # Regular booking
             booking = db.query(Booking).options(
@@ -407,6 +444,7 @@ def get_booking_details(booking_id: Union[str, int], is_package: bool, db: Sessi
                     print(f"Error self-healing booking detail {booking.id}: {e}")
             
             room_ids = [r.room_id for r in booking.booking_rooms if r.room_id]
+            start_filter = booking.checked_in_at or booking.check_in
 
             return BookingOut(
                 id=booking.id,
@@ -425,9 +463,9 @@ def get_booking_details(booking_id: Union[str, int], is_package: bool, db: Sessi
                 total_amount=total_amt,
                 advance_deposit=booking.advance_deposit or 0.0,
                 rooms=[br.room for br in booking.booking_rooms if br.room],
-                food_orders=_fetch_extras(db, room_ids, booking.check_in, booking.check_out),
-                service_requests=_fetch_services(db, room_ids, booking.check_in, booking.check_out),
-                inventory_usage=_fetch_inventory(db, room_ids, booking.check_in, booking.check_out)
+                food_orders=_fetch_extras(db, room_ids, start_filter, booking.check_out),
+                service_requests=_fetch_services(db, room_ids, start_filter, booking.check_out),
+                inventory_usage=_fetch_inventory(db, room_ids, start_filter, booking.check_out, booking_id=booking.id)
             )
     except Exception as e:
         print(f"Error getting booking details: {e}")
@@ -1062,50 +1100,52 @@ def check_in_booking(
                              
                              food_item = db.query(FoodItem).filter(FoodItem.name.ilike(name)).first()
                              
-                             new_order = FoodOrder(
-                                 room_id=room_id,
-                                 amount=0.0,
-                                 status="scheduled",
-                                 billing_status="unbilled",
-                                 order_type="room_service",
-                                 delivery_request=f"SCHEDULED_FOR: {schedule_str} -- Package Meal: {name}",
-                                 created_at=datetime.utcnow()
-                             )
-                             db.add(new_order)
-                             db.flush()
-                             
-                             print(f"[DEBUG] REGULAR: Created scheduled order {new_order.id}")
-
-                             # Logic for adding items to the order
+                             # Build items list
+                             items_to_add = []
                              specific_items = item.get("specificFoodItems", [])
-                             items_added = False
-
+                             
                              if specific_items and len(specific_items) > 0:
                                  for spec_item in specific_items:
                                      f_id = spec_item.get("foodItemId")
                                      qty = spec_item.get("quantity", 1)
-                                     
                                      if f_id:
-                                         f_item = db.query(FoodItem).filter(FoodItem.id == int(f_id)).first()
-                                         if f_item:
-                                             order_item = FoodOrderItem(
-                                                 order_id=new_order.id,
-                                                 food_item_id=f_item.id,
-                                                 quantity=int(qty)
-                                             )
-                                             db.add(order_item)
-                                             items_added = True
+                                         items_to_add.append(FoodOrderItemCreate(food_item_id=int(f_id), quantity=int(qty)))
                              
-                             # Fallback: if no specific items were added (or none selected), try to match the feature name
-                             if not items_added:
-                                 if food_item:
-                                     order_item = FoodOrderItem(
-                                         order_id=new_order.id,
-                                         food_item_id=food_item.id,
-                                         quantity=item.get("complimentaryPerNight", 1)
-                                     )
-                                     db.add(order_item)
+                             # Fallback: find by name if no specific items
+                             if not items_to_add:
+                                 # Try direct match
+                                 found_item = db.query(FoodItem).filter(FoodItem.name.ilike(name)).first()
                                  
+                                 # Improved matching for common package meals
+                                 if not found_item:
+                                     if "breakfast" in name.lower():
+                                         found_item = db.query(FoodItem).filter(FoodItem.name.ilike("%breakfast%")).first()
+                                     elif "lunch" in name.lower():
+                                         found_item = db.query(FoodItem).filter(FoodItem.name.ilike("%lunch%")).first()
+                                     elif "dinner" in name.lower():
+                                         found_item = db.query(FoodItem).filter(FoodItem.name.ilike("%dinner%")).first()
+                                     elif "tea" in name.lower() or "snack" in name.lower():
+                                         found_item = db.query(FoodItem).filter(FoodItem.name.ilike("%tea%") | FoodItem.name.ilike("%snack%")).first()
+                             
+                                 if found_item:
+                                     qty = item.get("complimentaryPerNight", 1)
+                                     items_to_add.append(FoodOrderItemCreate(food_item_id=found_item.id, quantity=int(qty)))
+                             
+                             # Create the order via CRUD to ensure ServiceRequest is created
+                             order_data = FoodOrderCreate(
+                                 room_id=room_id,
+                                 amount=0.0,
+                                 assigned_employee_id=current_user.employee.id if current_user.employee else 1,
+                                 items=items_to_add,
+                                 status="scheduled",
+                                 billing_status="unbilled",
+                                 order_type="room_service",
+                                 delivery_request=f"SCHEDULED_FOR: {schedule_str} -- Package Meal: {name}"
+                             )
+                             
+                             new_order = crud_food_order.create_food_order(db, order_data)
+                             new_order = crud_food_order.create_food_order(db, order_data)
+                             print(f"[DEBUG] REGULAR: Created scheduled order {new_order.id} via CRUD")
                         except Exception as e:
                             print(f"Error creating scheduled order for {name}: {e}")
                             
@@ -1223,7 +1263,9 @@ def check_in_booking(
                         status="approved", # Auto-approve system issues
                         issued_by_id=current_user.id,
                         reference_number=f"CHK-IN-{booking_id}-{room.number}",
-                        notes=f"Automatic Amenity Issue for Check-in {formatted_booking_id}"
+                        notes=f"Automatic Amenity Issue for Check-in {formatted_booking_id}",
+                        booking_id=booking.id,
+                        guest_id=booking.user_id
                     )
                     db.add(stock_issue)
                     db.flush() # Get ID

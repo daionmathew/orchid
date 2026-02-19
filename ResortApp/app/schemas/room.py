@@ -21,6 +21,7 @@ class RoomBase(BaseModel):
     garden: bool = False
     dining: bool = False
     breakfast: bool = False
+    extra_images: Optional[str] = None
 
 class RoomCreate(RoomBase):
     pass
@@ -32,6 +33,7 @@ class RoomOut(RoomBase):
     housekeeping_updated_at: Optional[datetime] = None
     last_maintenance_date: Optional[date] = None
     image_url: str | None = None
+    extra_images: Optional[str] = None
     current_guest_name: Optional[str] = None
 
     model_config = {

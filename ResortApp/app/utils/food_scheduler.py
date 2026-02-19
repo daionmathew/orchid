@@ -1,33 +1,51 @@
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session, joinedload
 from app.database import SessionLocal
 from app.models.Package import PackageBooking
+from app.models.foodorder import FoodOrder, FoodOrderItem
 from app.models.service_request import ServiceRequest
 from app.models.room import Room
+from app.curd.foodorder import trigger_scheduled_orders, create_food_order
+from app.schemas.foodorder import FoodOrderCreate, FoodOrderItemCreate
+
+def get_ist_time():
+    """Get current time in Indian Standard Time"""
+    # Assuming the server might be in UTC, IST is UTC+5:30
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 async def run_food_scheduler():
     """Background task to check food schedules every minute"""
-    print("[SCHEDULER] Starting food schedule monitor...")
+    print("[SCHEDULER] Starting food schedule monitor (IST)...")
     while True:
         try:
             check_food_schedules()
         except Exception as e:
             print(f"[SCHEDULER] Error: {e}")
+            import traceback
+            traceback.print_exc()
         
         # Wait for next minute check
-        # Align to next minute start for precision? No, simple sleep is fine for now
         await asyncio.sleep(60) 
 
 def check_food_schedules():
     db = SessionLocal()
     try:
-        now = datetime.now()
-        current_time_str = now.strftime("%H:%M") # e.g. "08:00"
+        now_ist = get_ist_time()
+        
+        # 1. Trigger individual scheduled FoodOrders
+        try:
+            trigger_scheduled_orders(db)
+        except Exception as e:
+            print(f"[SCHEDULER] Error triggering individual orders: {e}")
+
+        # 2. Handle recurring Package Meals
+        # Lookahead for 60 minutes
+        target_time = now_ist + timedelta(minutes=60)
+        target_time_str = target_time.strftime("%H:%M") # e.g. "08:00"
         
         # Get active checked-in bookings
-        # Join package to access food_timing
         active_bookings = (
             db.query(PackageBooking)
             .options(joinedload(PackageBooking.package))
@@ -42,53 +60,84 @@ def check_food_schedules():
                 continue
                 
             try:
-                # Parse JSON timing schedule: {"Breakfast": "08:00", "Lunch": "13:00"}
-                if isinstance(booking.package.food_timing, str):
-                    timings = json.loads(booking.package.food_timing)
-                else:
-                    timings = booking.package.food_timing # Already dict or none
+                timings_data = booking.package.food_timing
+                timings = {}
                 
-                if not timings or not isinstance(timings, dict):
+                if isinstance(timings_data, str):
+                    try:
+                         timings_data = json.loads(timings_data)
+                    except:
+                         pass
+                
+                if isinstance(timings_data, dict):
+                    timings = timings_data
+                
+                if not timings:
                     continue
                     
             except Exception as e:
-                # print(f"Error parsing timing for booking {booking.id}: {e}")
                 continue
                 
-            for meal, time_str in timings.items():
-                # Check if current time matches scheduled time
-                if time_str == current_time_str:
-                    
-                    # For each room in this booking, create a service request
+            for meal, data in timings.items():
+                scheduled_time = ""
+                scheduled_items = []
+                
+                if isinstance(data, dict):
+                    scheduled_time = data.get("time", "")
+                    scheduled_items = data.get("items", [])
+                else:
+                    scheduled_time = str(data) 
+                
+                # Check if target time matches scheduled time
+                if scheduled_time == target_time_str:
                     for room_link in booking.rooms:
                         room_id = room_link.room_id
                         
-                        # Check duplicate: Prevent creating multiple requests for same meal same day
-                        # Filter by room_id and description matching today
-                        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                        # Prevent duplicates for today
+                        start_of_day = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
                         
-                        exists = db.query(ServiceRequest).filter(
-                             ServiceRequest.room_id == room_id,
-                             ServiceRequest.description.like(f"Auto-Scheduled {meal}%"),
-                             ServiceRequest.created_at >= start_of_day
+                        # Check for existing FoodOrder for this meal today
+                        exists = db.query(FoodOrder).filter(
+                             FoodOrder.room_id == room_id,
+                             FoodOrder.delivery_request.like(f"Auto-Scheduled {meal}%"),
+                             FoodOrder.created_at >= start_of_day
                         ).first()
                         
                         if not exists:
-                            # Create Request
-                            print(f"[AUTO-SCHEDULER] Creating {meal} request for Room {room_id}")
-                            req = ServiceRequest(
+                            print(f"[AUTO-SCHEDULER] Generating {meal} FoodOrder for Room {room_id} (Scheduled: {scheduled_time})")
+                            
+                            # Prepare items list
+                            items_to_create = []
+                            for item in scheduled_items:
+                                if isinstance(item, dict) and item.get("id"):
+                                    items_to_create.append(FoodOrderItemCreate(
+                                        food_item_id=int(item["id"]),
+                                        quantity=int(item.get("qty", 1))
+                                    ))
+                            
+                            # Create Food Order
+                            # amount=0 makes it complimentary
+                            # order_type="room_service" triggers ServiceRequest creation in curd layer
+                            order_data = FoodOrderCreate(
                                 room_id=room_id,
-                                request_type="food_delivery",
-                                description=f"Auto-Scheduled {meal} (Package: {booking.package.title})",
+                                amount=0.0,
+                                assigned_employee_id=None,
+                                items=items_to_create,
                                 status="pending",
-                                created_at=now
+                                billing_status="unbilled",
+                                order_type="room_service",
+                                delivery_request=f"Auto-Scheduled {meal} for {scheduled_time} (Package: {booking.package.title})"
                             )
-                            db.add(req)
-                            count += 1
+                            
+                            try:
+                                # This will also create the ServiceRequest because order_type="room_service"
+                                create_food_order(db, order_data)
+                                count += 1
+                            except Exception as e:
+                                print(f"[SCHEDULER] Failed to create food order: {e}")
                             
         if count > 0:
-            db.commit()
-            print(f"[AUTO-SCHEDULER] Created {count} service requests for {current_time_str}")
+            print(f"[AUTO-SCHEDULER] Successfully generated {count} food orders for meal time {target_time_str}")
             
     except Exception as e:
         print(f"Error in check_food_schedules: {e}")
@@ -96,3 +145,4 @@ def check_food_schedules():
         traceback.print_exc()
     finally:
         db.close()
+

@@ -80,8 +80,8 @@ def create_booking_journal_entry(
     if abs(total_debits - total_credits) > 0.01:
         error_msg = (
             f"Booking journal entry for booking {booking_id} is not balanced. "
-            f"Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
         print(f"[ERROR] {error_msg}")
         raise ValueError(error_msg)
@@ -91,13 +91,13 @@ def create_booking_journal_entry(
         reference_type="booking",
         reference_id=booking_id,
         description=f"Room booking checkout - Booking #{booking_id} ({guest_name})",
-        notes=f"Room amount: ₹{room_amount}, GST: ₹{gst_amount} @ {gst_rate}%",
+        notes=f"Room amount: Rs.{room_amount}, GST: Rs.{gst_amount} @ {gst_rate}%",
         lines=lines
     )
     
     try:
         journal_entry = create_journal_entry(db, entry, created_by)
-        print(f"[INFO] Booking journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=₹{total_debits:.2f}, Credits=₹{total_credits:.2f})")
+        print(f"[INFO] Booking journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=Rs.{total_debits:.2f}, Credits=Rs.{total_credits:.2f})")
         return journal_entry.id
     except ValueError as ve:
         print(f"[ERROR] Balance validation failed for booking {booking_id}: {str(ve)}")
@@ -123,11 +123,11 @@ def create_purchase_journal_entry(
     Create journal entry for inventory purchase
     Scenario 1: Purchase of Inventory (Stock In)
     
-    Example: Store Manager receives 100kg Rice from "Fresh Farms" (Invoice ₹5,000 + 5% GST)
-    - Debit: Inventory Asset ₹5,000
-    - Debit: Input SGST ₹125
-    - Debit: Input CGST ₹125
-    - Credit: Accounts Payable (Fresh Farms) ₹5,250
+    Example: Store Manager receives 100kg Rice from "Fresh Farms" (Invoice Rs.5,000 + 5% GST)
+    - Debit: Inventory Asset Rs.5,000
+    - Debit: Input SGST Rs.125
+    - Debit: Input CGST Rs.125
+    - Credit: Accounts Payable (Fresh Farms) Rs.5,250
     
     For inter-state purchases:
     - Debit: Inventory Asset
@@ -196,8 +196,8 @@ def create_purchase_journal_entry(
     if abs(total_debits - total_credits) > 0.01:
         error_msg = (
             f"Purchase journal entry for purchase {purchase_id} is not balanced. "
-            f"Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
         print(f"[ERROR] {error_msg}")
         raise ValueError(error_msg)
@@ -207,13 +207,13 @@ def create_purchase_journal_entry(
         reference_type="purchase",
         reference_id=purchase_id,
         description=f"Inventory purchase - Purchase #{purchase_id} from {vendor_name}",
-        notes=f"Inventory amount: ₹{inventory_amount}, CGST: ₹{cgst_amount}, SGST: ₹{sgst_amount}, IGST: ₹{igst_amount}, Total: ₹{total_amount}",
+        notes=f"Inventory amount: Rs.{inventory_amount}, CGST: Rs.{cgst_amount}, SGST: Rs.{sgst_amount}, IGST: Rs.{igst_amount}, Total: Rs.{total_amount}",
         lines=lines
     )
     
     try:
         journal_entry = create_journal_entry(db, entry, created_by)
-        print(f"[INFO] Purchase journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=₹{total_debits:.2f}, Credits=₹{total_credits:.2f})")
+        print(f"[INFO] Purchase journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=Rs.{total_debits:.2f}, Credits=Rs.{total_credits:.2f})")
         return journal_entry.id
     except ValueError as ve:
         print(f"[ERROR] Balance validation failed for purchase {purchase_id}: {str(ve)}")
@@ -266,8 +266,8 @@ def create_consumption_journal_entry(
     if abs(total_debits - total_credits) > 0.01:
         error_msg = (
             f"Consumption journal entry for consumption {consumption_id} is not balanced. "
-            f"Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
         print(f"[ERROR] {error_msg}")
         raise ValueError(error_msg)
@@ -277,13 +277,13 @@ def create_consumption_journal_entry(
         reference_type=reference_type,
         reference_id=consumption_id,
         description=f"Inventory consumption - {inventory_item_name}",
-        notes=f"COGS: ₹{cogs_amount}",
+        notes=f"COGS: Rs.{cogs_amount}",
         lines=lines
     )
     
     try:
         journal_entry = create_journal_entry(db, entry, created_by)
-        print(f"[INFO] Consumption journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=₹{total_debits:.2f}, Credits=₹{total_credits:.2f})")
+        print(f"[INFO] Consumption journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=Rs.{total_debits:.2f}, Credits=Rs.{total_credits:.2f})")
         return journal_entry.id
     except ValueError as ve:
         print(f"[ERROR] Balance validation failed for consumption {consumption_id}: {str(ve)}")
@@ -336,8 +336,8 @@ def create_complimentary_journal_entry(
     if abs(total_debits - total_credits) > 0.01:
         error_msg = (
             f"Complimentary journal entry for complimentary {complimentary_id} is not balanced. "
-            f"Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
         print(f"[ERROR] {error_msg}")
         raise ValueError(error_msg)
@@ -347,13 +347,13 @@ def create_complimentary_journal_entry(
         reference_type="complimentary",
         reference_id=complimentary_id,
         description=f"Complimentary item - {item_name} (Room {room_number})",
-        notes=f"Expense: ₹{expense_amount}",
+        notes=f"Expense: Rs.{expense_amount}",
         lines=lines
     )
     
     try:
         journal_entry = create_journal_entry(db, entry, created_by)
-        print(f"[INFO] Complimentary journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=₹{total_debits:.2f}, Credits=₹{total_credits:.2f})")
+        print(f"[INFO] Complimentary journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=Rs.{total_debits:.2f}, Credits=Rs.{total_credits:.2f})")
         return journal_entry.id
     except ValueError as ve:
         print(f"[ERROR] Balance validation failed for complimentary {complimentary_id}: {str(ve)}")
@@ -428,8 +428,8 @@ def create_food_order_journal_entry(
     if abs(total_debits - total_credits) > 0.01:
         error_msg = (
             f"Food order journal entry for order {food_order_id} is not balanced. "
-            f"Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
         print(f"[ERROR] {error_msg}")
         raise ValueError(error_msg)
@@ -439,13 +439,13 @@ def create_food_order_journal_entry(
         reference_type="food_order",
         reference_id=food_order_id,
         description=f"Food order revenue - Order #{food_order_id} (Room {room_number})",
-        notes=f"Food amount: ₹{base_amount}, GST: ₹{gst_amount} @ {gst_rate}%",
+        notes=f"Food amount: Rs.{base_amount}, GST: Rs.{gst_amount} @ {gst_rate}%",
         lines=lines
     )
     
     try:
         journal_entry = create_journal_entry(db, entry, created_by)
-        print(f"[INFO] Food order journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=₹{total_debits:.2f}, Credits=₹{total_credits:.2f})")
+        print(f"[INFO] Food order journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=Rs.{total_debits:.2f}, Credits=Rs.{total_credits:.2f})")
         return journal_entry.id
     except ValueError as ve:
         print(f"[ERROR] Balance validation failed for food order {food_order_id}: {str(ve)}")
@@ -521,8 +521,8 @@ def create_service_revenue_journal_entry(
     if abs(total_debits - total_credits) > 0.01:
         error_msg = (
             f"Service journal entry for service {service_id} is not balanced. "
-            f"Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
         print(f"[ERROR] {error_msg}")
         raise ValueError(error_msg)
@@ -532,13 +532,13 @@ def create_service_revenue_journal_entry(
         reference_type="service",
         reference_id=service_id,
         description=f"Service revenue - {service_name} (Room {room_number})",
-        notes=f"Service amount: ₹{base_amount}, GST: ₹{gst_amount} @ {gst_rate}%",
+        notes=f"Service amount: Rs.{base_amount}, GST: Rs.{gst_amount} @ {gst_rate}%",
         lines=lines
     )
     
     try:
         journal_entry = create_journal_entry(db, entry, created_by)
-        print(f"[INFO] Service journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=₹{total_debits:.2f}, Credits=₹{total_credits:.2f})")
+        print(f"[INFO] Service journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=Rs.{total_debits:.2f}, Credits=Rs.{total_credits:.2f})")
         return journal_entry.id
     except ValueError as ve:
         print(f"[ERROR] Balance validation failed for service {service_id}: {str(ve)}")
@@ -597,8 +597,8 @@ def create_expense_journal_entry(
     if abs(total_debits - total_credits) > 0.01:
         error_msg = (
             f"Expense journal entry for expense {expense_id} is not balanced. "
-            f"Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
         print(f"[ERROR] {error_msg}")
         raise ValueError(error_msg)
@@ -608,13 +608,13 @@ def create_expense_journal_entry(
         reference_type="expense",
         reference_id=expense_id,
         description=f"Expense - {category}: {description}",
-        notes=f"Amount: ₹{amount}",
+        notes=f"Amount: Rs.{amount}",
         lines=lines
     )
     
     try:
         journal_entry = create_journal_entry(db, entry, created_by)
-        print(f"[INFO] Expense journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=₹{total_debits:.2f}, Credits=₹{total_credits:.2f})")
+        print(f"[INFO] Expense journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=Rs.{total_debits:.2f}, Credits=Rs.{total_credits:.2f})")
         return journal_entry.id
     except ValueError as ve:
         print(f"[ERROR] Balance validation failed for expense {expense_id}: {str(ve)}")
@@ -645,11 +645,11 @@ def create_complete_checkout_journal_entry(
     """
     Create comprehensive journal entry for complete checkout (Scenario 2: Guest Checkout)
     
-    Example: Guest pays ₹11,800 (₹10k Room + 18% GST) by Swipe Card
-    - Debit: Bank Account (HDFC) ₹11,800
-    - Credit: Room Revenue ₹10,000
-    - Credit: Output CGST ₹900
-    - Credit: Output SGST ₹900
+    Example: Guest pays Rs.11,800 (Rs.10k Room + 18% GST) by Swipe Card
+    - Debit: Bank Account (HDFC) Rs.11,800
+    - Credit: Room Revenue Rs.10,000
+    - Credit: Output CGST Rs.900
+    - Credit: Output SGST Rs.900
     
     Includes room, food, services, and all charges
     """
@@ -829,8 +829,8 @@ def create_complete_checkout_journal_entry(
     if abs(total_debits - total_credits) > 0.01:
         error_msg = (
             f"Journal entry for checkout {checkout_id} is not balanced. "
-            f"Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
         print(f"[ERROR] {error_msg}")
         raise ValueError(error_msg)
@@ -840,13 +840,13 @@ def create_complete_checkout_journal_entry(
         reference_type="checkout",
         reference_id=checkout_id,
         description=f"Complete checkout - {guest_name} (Room {room_number})",
-        notes=f"Room: ₹{room_total}, Food: ₹{food_total}, Service: ₹{service_total}, Package: ₹{package_total}, Tax: ₹{tax_amount}, Discount: ₹{discount_amount}, Total: ₹{grand_total}",
+        notes=f"Room: Rs.{room_total}, Food: Rs.{food_total}, Service: Rs.{service_total}, Package: Rs.{package_total}, Tax: Rs.{tax_amount}, Discount: Rs.{discount_amount}, Total: Rs.{grand_total}",
         lines=lines
     )
     
     try:
         journal_entry = create_journal_entry(db, entry, created_by)
-        print(f"[INFO] Journal entry {journal_entry.entry_number} created successfully for checkout {checkout_id} (Balanced: Debits=₹{total_debits:.2f}, Credits=₹{total_credits:.2f})")
+        print(f"[INFO] Journal entry {journal_entry.entry_number} created successfully for checkout {checkout_id} (Balanced: Debits=Rs.{total_debits:.2f}, Credits=Rs.{total_credits:.2f})")
         return journal_entry.id
     except ValueError as ve:
         # Re-raise validation errors
@@ -911,9 +911,9 @@ def create_rcm_journal_entry(
     - Credit: Cash/Bank (taxable value - vendor gets no tax)
     - Credit: Output IGST/CGST/SGST RCM Payable (tax liability)
     
-    Example: You pay a Lawyer ₹50,000 fees (RCM @ 18%)
-    - Debit Legal Fees ₹50,000 | Credit Bank ₹50,000
-    - Debit Input IGST (RCM) ₹9,000 | Credit Output IGST (RCM Payable) ₹9,000
+    Example: You pay a Lawyer Rs.50,000 fees (RCM @ 18%)
+    - Debit Legal Fees Rs.50,000 | Credit Bank Rs.50,000
+    - Debit Input IGST (RCM) Rs.9,000 | Credit Output IGST (RCM Payable) Rs.9,000
     
     Args:
         expense_id: ID of expense record (if RCM from expense)
@@ -1046,8 +1046,8 @@ def create_rcm_journal_entry(
     if abs(total_debits - total_credits) > 0.01:
         error_msg = (
             f"RCM journal entry for {ref_type} {ref_id} is not balanced. "
-            f"Debits: ₹{total_debits:.2f}, Credits: ₹{total_credits:.2f}, "
-            f"Difference: ₹{abs(total_debits - total_credits):.2f}"
+            f"Debits: Rs.{total_debits:.2f}, Credits: Rs.{total_credits:.2f}, "
+            f"Difference: Rs.{abs(total_debits - total_credits):.2f}"
         )
         print(f"[ERROR] {error_msg}")
         raise ValueError(error_msg)
@@ -1057,13 +1057,13 @@ def create_rcm_journal_entry(
         reference_type=ref_type,
         reference_id=ref_id,
         description=f"RCM Transaction - {nature_of_supply} from {vendor_name}",
-        notes=f"Self-Invoice: {self_invoice_number or 'N/A'}, Taxable Value: ₹{taxable_value}, Tax Rate: {tax_rate}%, Tax Amount: ₹{tax_amount}, ITC Eligible: {itc_eligible}",
+        notes=f"Self-Invoice: {self_invoice_number or 'N/A'}, Taxable Value: Rs.{taxable_value}, Tax Rate: {tax_rate}%, Tax Amount: Rs.{tax_amount}, ITC Eligible: {itc_eligible}",
         lines=lines
     )
     
     try:
         journal_entry = create_journal_entry(db, entry, created_by)
-        print(f"[INFO] RCM journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=₹{total_debits:.2f}, Credits=₹{total_credits:.2f})")
+        print(f"[INFO] RCM journal entry {journal_entry.entry_number} created successfully (Balanced: Debits=Rs.{total_debits:.2f}, Credits=Rs.{total_credits:.2f})")
         return journal_entry.id
     except ValueError as ve:
         print(f"[ERROR] Balance validation failed for RCM {ref_type} {ref_id}: {str(ve)}")
