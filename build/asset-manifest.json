@@ -1,13 +1,13 @@
 {
   "files": {
-    "main.css": "/orchid/static/css/main.1e4e9bc1.css",
-    "main.js": "/orchid/static/js/main.3a131085.js",
+    "main.css": "/orchid/static/css/main.ff915caa.css",
+    "main.js": "/orchid/static/js/main.7ace99d0.js",
     "index.html": "/orchid/index.html",
-    "main.1e4e9bc1.css.map": "/orchid/static/css/main.1e4e9bc1.css.map",
-    "main.3a131085.js.map": "/orchid/static/js/main.3a131085.js.map"
+    "main.ff915caa.css.map": "/orchid/static/css/main.ff915caa.css.map",
+    "main.7ace99d0.js.map": "/orchid/static/js/main.7ace99d0.js.map"
   },
   "entrypoints": [
-    "static/css/main.1e4e9bc1.css",
-    "static/js/main.3a131085.js"
+    "static/css/main.ff915caa.css",
+    "static/js/main.7ace99d0.js"
   ]
 }
