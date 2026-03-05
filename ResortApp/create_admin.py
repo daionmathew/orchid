@@ -1,58 +1,56 @@
-#!/usr/bin/env python3
-"""Create admin user for Orchid Resort"""
-
+import sys
+import os
+sys.path.append(os.getcwd())
+from app.utils.auth import get_password_hash 
 from app.database import SessionLocal
 from app.models.user import User, Role
-from passlib.context import CryptContext
-from datetime import datetime
 
-pwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto')
-db = SessionLocal()
-
-try:
-    # Check if admin role exists
+def create_admin():
+    db = SessionLocal()
+    
+    # 1. Ensure Admin Role Exists
     admin_role = db.query(Role).filter(Role.name == 'Admin').first()
     if not admin_role:
-        admin_role = Role(
-            name='Admin',
-            permissions='/dashboard,/bookings,/rooms,/services,/expenses,/food-orders,/food-categories,/food-items,/billing,/packages,/users,/roles,/employees,/reports,/account,/userfrontend_data,/guestprofiles,/employee-management'
-        )
+        print("Creating Admin role...")
+        admin_role = Role(name='Admin', permissions='{"all": true}')
         db.add(admin_role)
-        db.flush()
-        print('Admin role created')
-    else:
-        print('Admin role already exists')
+        db.commit()
     
-    # Check if admin user exists
-    admin_user = db.query(User).filter(User.email == 'admin@orchid.com').first()
-    if admin_user:
-        # Update password
-        admin_user.hashed_password = pwd_context.hash('admin123')
-        print('Admin user password updated')
-    else:
-        # Create new admin user
+    # 2. Add Admin User
+    admin_email = 'admin@orchid.com'
+    admin_user = db.query(User).filter(User.email == admin_email).first()
+    
+    password = "admin"
+    hashed_pwd = get_password_hash(password)
+    
+    if not admin_user:
+        print(f"Creating new admin user: {admin_email} / {password} ...")
         admin_user = User(
-            name='Admin',
-            email='admin@orchid.com',
-            hashed_password=pwd_context.hash('admin123'),
-            phone='1234567890',
+            email=admin_email,
+            name='Admin User',
+            hashed_password=hashed_pwd,
             role_id=admin_role.id,
             is_active=True
         )
         db.add(admin_user)
-        print('Admin user created')
-    
-    db.commit()
-    print('\n=== Login Credentials ===')
-    print('Email: admin@orchid.com')
-    print('Password: admin123')
-    print('========================\n')
-    
-except Exception as e:
-    print(f'Error: {e}')
-    import traceback
-    traceback.print_exc()
-    db.rollback()
-finally:
-    db.close()
+        try:
+            db.commit()
+            print("✓ SUCCESS: Admin credentials created.")
+        except Exception as e:
+            db.rollback()
+            print(f"✗ ERROR creating admin: {e}")
+    else:
+        print(f"Admin user {admin_email} already exists. Resetting password to: '{password}' ...")
+        admin_user.hashed_password = hashed_pwd
+        if not admin_user.role_id:
+            admin_user.role_id = admin_role.id
+        admin_user.is_active = True
+        try:
+            db.commit()
+            print("✓ SUCCESS: Admin credentials updated.")
+        except Exception as e:
+            db.rollback()
+            print(f"✗ ERROR updating admin: {e}")
 
+if __name__ == "__main__":
+    create_admin()

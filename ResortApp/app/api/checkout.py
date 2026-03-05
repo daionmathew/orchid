@@ -2405,41 +2405,48 @@ def get_checkout_details(checkout_id: int, db: Session = Depends(get_db), curren
                 "asset_damage_charges": damage_charges
             }
             
-    # Self-healing totals
-    final_food_total = checkout.food_total
+    # Self-healing totals with safety checks for None values
+    final_food_total = checkout.food_total or 0.0
     if final_food_total == 0 and food_orders:
-         final_food_total = sum(o['amount'] for o in food_orders)
+         final_food_total = sum((o.get('amount') or 0.0) for o in food_orders)
          
-    final_service_total = checkout.service_total
+    final_service_total = checkout.service_total or 0.0
     if final_service_total == 0 and services:
-         final_service_total = sum(s['charges'] for s in services)
+         final_service_total = sum((s.get('charges') or 0.0) for s in services)
 
-    final_consumables_charges = checkout.consumables_charges
-    final_inventory_charges = checkout.inventory_charges
-    final_asset_damage_charges = checkout.asset_damage_charges
+    final_consumables_charges = checkout.consumables_charges or 0.0
+    final_inventory_charges = checkout.inventory_charges or 0.0
+    final_asset_damage_charges = checkout.asset_damage_charges or 0.0
 
     if bill_details:
+        if isinstance(bill_details, str):
+            import json
+            try:
+                bill_details = json.loads(bill_details)
+            except Exception:
+                bill_details = {}
+
         # Use charges from bill_details if record totals are 0
         if final_consumables_charges == 0:
-            final_consumables_charges = bill_details.get('consumables_charges', 0)
+            final_consumables_charges = bill_details.get('consumables_charges') or 0.0
         if final_inventory_charges == 0:
-            final_inventory_charges = bill_details.get('inventory_charges', 0)
+            final_inventory_charges = bill_details.get('inventory_charges') or 0.0
         if final_asset_damage_charges == 0:
-            final_asset_damage_charges = bill_details.get('asset_damage_charges', 0)
+            final_asset_damage_charges = bill_details.get('asset_damage_charges') or 0.0
         
         # Ensure root-level access for items in frontend
         if 'consumables_items' not in bill_details:
             # Try to pull from charges_breakdown or consumables_audit
-            if 'charges_breakdown' in bill_details and 'consumables_items' in bill_details['charges_breakdown']:
+            if bill_details.get('charges_breakdown') and 'consumables_items' in bill_details.get('charges_breakdown', {}):
                 bill_details['consumables_items'] = bill_details['charges_breakdown']['consumables_items']
-            elif 'consumables_audit' in bill_details and 'items' in bill_details['consumables_audit']:
+            elif bill_details.get('consumables_audit') and 'items' in bill_details.get('consumables_audit', {}):
                 bill_details['consumables_items'] = bill_details['consumables_audit']['items']
         
-        if 'asset_damages' not in bill_details or not isinstance(bill_details['asset_damages'], list):
+        if 'asset_damages' not in bill_details or not isinstance(bill_details.get('asset_damages'), list):
             # If it's the object structure, move items to root list
-            if isinstance(bill_details.get('asset_damages'), dict) and 'items' in bill_details['asset_damages']:
+            if isinstance(bill_details.get('asset_damages'), dict) and 'items' in bill_details.get('asset_damages', {}):
                 bill_details['asset_damages'] = bill_details['asset_damages']['items']
-            elif 'charges_breakdown' in bill_details and 'asset_damages' in bill_details['charges_breakdown']:
+            elif bill_details.get('charges_breakdown') and 'asset_damages' in bill_details.get('charges_breakdown', {}):
                 bill_details['asset_damages'] = bill_details['charges_breakdown']['asset_damages']
 
     return {

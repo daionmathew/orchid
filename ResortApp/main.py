@@ -452,6 +452,6 @@ if __name__ == "__main__":
     import uvicorn
     import os
 
-    # Get port from environment or default to 8012 for Orchid (Avoiding 8011 conflict)
-    port = int(os.getenv("PORT", 8012))
+    # Get port from environment or default to 8011 for Orchid (Avoiding 8011 conflict)
+    port = int(os.getenv("PORT", 8011))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
