@@ -76,23 +76,23 @@ export const getApiBaseUrl = () => {
 
   // For production deployments (not localhost)
   if (typeof window !== "undefined" && isInventoryDeployment()) {
-    const apiUrl = `${window.location.origin}/inventoryapi/api`;
+    const apiUrl = `${window.location.origin}/inventoryapi`;
     console.log("Using Inventory deployment API URL:", apiUrl);
     return apiUrl;
   }
   if (typeof window !== "undefined" && isOrchidDeployment()) {
-    const apiUrl = `${window.location.origin}/orchidapi/api`;
+    const apiUrl = `${window.location.origin}/orchidapi`;
     console.log("Using Orchid deployment API URL:", apiUrl);
     return apiUrl;
   }
   if (typeof window !== "undefined" && isPommaDeployment()) {
-    const apiUrl = `${window.location.origin}/pommaapi/api`;
+    const apiUrl = `${window.location.origin}/pommaapi`;
     console.log("Using Pomma deployment API URL:", apiUrl);
     return apiUrl;
   }
   // Sensible defaults
   const defaultUrl = process.env.NODE_ENV === "production"
-    ? "https://www.teqmates.com/inventoryapi/api"
+    ? "https://www.teqmates.com/inventoryapi"
     : "http://localhost:8011/api";
   console.log("Using default API URL:", defaultUrl);
   return defaultUrl;
