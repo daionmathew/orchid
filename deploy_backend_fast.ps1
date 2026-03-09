@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$baseDir = "C:\releasing\New Orchid"
+$baseDir = "D:\orchid_resort"
 $backendDir = "$baseDir\ResortApp"
 $backendZip = "$baseDir\backend_deploy_fast.zip"
 $serverIP = "136.113.93.47"

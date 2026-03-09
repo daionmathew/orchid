@@ -1,3 +1,4 @@
+
 # ☁️ Deploying TeqMates Projects to Google Cloud Platform (Compute Engine)
 
  This guide outlines how to migrate your existing multi-tenant setup (Pomma, Orchid, Resort) to a **GCP Compute Engine Virtual Machine**. This approach replicates your current server architecture (Ubuntu + Nginx + Postgres) for maximum compatibility.

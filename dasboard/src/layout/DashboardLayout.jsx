@@ -139,7 +139,21 @@ export const ProtectedRoute = ({ children, requiredPermission }) => {
     if (permissions.length > 0) {
       return <Navigate to={permissions[0]} replace />;
     }
-    return <div className="flex items-center justify-center h-screen text-red-600 font-bold text-xl">Access Denied: No permissions assigned.</div>;
+    return (
+      <div className="flex flex-col items-center justify-center h-screen space-y-4 bg-gray-50 p-4">
+        <div className="text-red-600 font-bold text-2xl text-center">Access Denied</div>
+        <div className="text-gray-600 text-lg text-center max-w-md">
+          You don't have any permissions assigned to your account. Please contact your administrator for access.
+        </div>
+        <button
+          onClick={() => { localStorage.removeItem("token"); window.location.reload(); }}
+          className="px-6 py-2 bg-[#1a4d3a] hover:bg-[#2d6a4f] text-white rounded-lg shadow-md transition-all duration-200 flex items-center gap-2 font-medium"
+        >
+          <LogOut size={18} />
+          Logout and Try Again
+        </button>
+      </div>
+    );
   }
 
   // Ensure children are rendered properly
@@ -429,6 +443,7 @@ export default function DashboardLayout({ children }) {
           <div className="p-4 border-t" style={{ borderColor: 'var(--accent-bg)' }}>
             <Link
               to="/"
+              onClick={() => localStorage.removeItem("token")}
               className="group block flex items-center gap-4 p-3 rounded-xl transition-all duration-200 cursor-pointer hover:opacity-75"
               style={{
                 backgroundColor: 'transparent',

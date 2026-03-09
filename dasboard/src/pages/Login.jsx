@@ -13,8 +13,9 @@ export default function LoginPage() {
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
+    const normalizedEmail = email.trim().toLowerCase();
     try {
-      const response = await api.post("/auth/login", { email, password });
+      const response = await api.post("/auth/login", { email: normalizedEmail, password });
       if (response.data && response.data.access_token) {
         localStorage.setItem("token", response.data.access_token);
 
@@ -93,10 +94,14 @@ export default function LoginPage() {
               Email / Username
             </label>
             <input
-              type="text"
+              type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#8bc34a] focus:border-[#8bc34a] focus:outline-none transition-colors"
+              placeholder="email@example.com"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck="false"
               required
             />
           </div>
@@ -152,6 +157,6 @@ export default function LoginPage() {
           }
         `}
       </style>
-    </div>
+    </div >
   );
 }
