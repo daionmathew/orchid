@@ -15,7 +15,9 @@ router = APIRouter(prefix="/food-categories", tags=["Food Categories"])
 @router.post("", response_model=FoodCategoryOut)
 def create_category(name: str = Form(...), image: UploadFile = File(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     filename = None
-    if image:
+    if image and image.filename:
+        # Ensure upload directory exists
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
         filename = f"category_{uuid.uuid4().hex}_{image.filename}"
         path = os.path.join(UPLOAD_DIR, filename)
         with open(path, "wb") as buffer:
@@ -52,11 +54,15 @@ def update(cat_id: int, name: str = Form(...), image: UploadFile = File(None), d
     
     # Handle image update if provided
     if image and image.filename:
+        # Ensure upload directory exists
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
         # Delete old image if exists
         if category.image:
             old_path = os.path.join(UPLOAD_DIR, category.image)
             if os.path.exists(old_path):
-                os.remove(old_path)
+                try:
+                    os.remove(old_path)
+                except: pass
         
         # Save new image
         filename = f"category_{uuid.uuid4().hex}_{image.filename}"

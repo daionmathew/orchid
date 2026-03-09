@@ -529,6 +529,16 @@ def update_room(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
+    # Helper to convert "true"/"false" strings from Form data to booleans
+    def str_to_bool(val):
+        if val is None:
+            return None
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.lower() in ('true', '1', 'yes')
+        return bool(val)
+
     db_room = db.query(Room).filter(Room.id == room_id).first()
     if not db_room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -553,29 +563,29 @@ def update_room(
     
     # Update feature fields if provided
     if air_conditioning is not None:
-        db_room.air_conditioning = air_conditioning
+        db_room.air_conditioning = str_to_bool(air_conditioning)
     if wifi is not None:
-        db_room.wifi = wifi
+        db_room.wifi = str_to_bool(wifi)
     if bathroom is not None:
-        db_room.bathroom = bathroom
+        db_room.bathroom = str_to_bool(bathroom)
     if living_area is not None:
-        db_room.living_area = living_area
+        db_room.living_area = str_to_bool(living_area)
     if terrace is not None:
-        db_room.terrace = terrace
+        db_room.terrace = str_to_bool(terrace)
     if parking is not None:
-        db_room.parking = parking
+        db_room.parking = str_to_bool(parking)
     if kitchen is not None:
-        db_room.kitchen = kitchen
+        db_room.kitchen = str_to_bool(kitchen)
     if family_room is not None:
-        db_room.family_room = family_room
+        db_room.family_room = str_to_bool(family_room)
     if bbq is not None:
-        db_room.bbq = bbq
+        db_room.bbq = str_to_bool(bbq)
     if garden is not None:
-        db_room.garden = garden
+        db_room.garden = str_to_bool(garden)
     if dining is not None:
-        db_room.dining = dining
+        db_room.dining = str_to_bool(dining)
     if breakfast is not None:
-        db_room.breakfast = breakfast
+        db_room.breakfast = str_to_bool(breakfast)
 
     # Handle new image uploads if provided
     if images:
@@ -605,6 +615,8 @@ def update_room(
             if img.filename:
                 ext = img.filename.split(".")[-1]
                 filename = f"room_{uuid4().hex}.{ext}"
+                # Ensure upload directory exists before saving
+                os.makedirs(UPLOAD_DIR, exist_ok=True)
                 image_path = os.path.join(UPLOAD_DIR, filename)
                 with open(image_path, "wb") as buffer:
                     shutil.copyfileobj(img.file, buffer)
