@@ -25,8 +25,9 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      final normalizedEmail = email.trim().toLowerCase();
       final response = await _apiService.client.post('/auth/login', data: {
-        'email': email,
+        'email': normalizedEmail,
         'password': password,
       });
 
