@@ -64,7 +64,11 @@ def login(request: LoginRequest, db: Session = Depends(auth.get_db)):
             print(f"Log Error: {log_err}")
 
         # Create access token
-        token_data = {"user_id": user.id, "role": user.role.name}
+        token_data = {
+            "user_id": user.id, 
+            "role": user.role.name,
+            "permissions": user.role.permissions_list
+        }
         if employee_id:
             token_data["employee_id"] = employee_id
             
